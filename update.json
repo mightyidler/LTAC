@@ -1,11 +1,11 @@
 {
-  "version": "0.1.0",
-  "notes": "LTAC 0.1.0",
-  "pub_date": "2026-10-18T11:12:53.496Z",
+  "version": "0.1.1",
+  "notes": "LTAC 0.1.1",
+  "pub_date": "2026-10-18T22:08:28.198Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUem5UZVBwR1pqN2xON3BZb09seUhPdkNYVVdseWRtOHFmcTZvQTE2K3JrcmJKVTVlMmNFckU1NVNhZkd6SmZXMHoyZkhGdXRhcTMwZmNwRnZGZ3loZmttOTlGS25xTFFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzIxOTY5CWZpbGU6TFRBQ18wLjEuMF94NjQtc2V0dXAuZXhlCXZlcnNpb246MC4xLjAKanI1OGVDcU1GNVRnMjdMYXJZalJhNmJpT3N5dFpTYzVldm9oK0R6ejA4L2QySEJVczBnMWx4cnNFem1nUnloZ213RDFWSk9XdTdLbnVoWk5NdnRTQWc9PQo=",
-      "url": "https://github.com/mightyidler/LTAC/releases/download/v0.1.0/LTAC_0.1.0_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUem5UZVBwR1pqN2hCa3lLQkRBU3pRdFpWcHNZMTJjQ2thTjM0OG1EQzNFQ2xDV2dBUThTa3VBbXpWSDN0dDdvNFo4bHhubkNLbUR3ZjVXT0hrRVFqckJqNHBNR2tCR3dBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzYxMzAxCWZpbGU6TFRBQ18wLjEuMV94NjQtc2V0dXAuZXhlCXZlcnNpb246MC4xLjEKaUdIbzQ5Y1QzQ1BtNlUvVmh4dWNoSHJ6SUJFTFhNUXZDS244aERCdCs4NVFnN20wQlp0K1NmMURsd3hpMGhiMW1RaUxtTmZrTHpYTjN6UWw2MHFKQlE9PQo=",
+      "url": "https://github.com/mightyidler/LTAC/releases/download/v0.1.1/LTAC_0.1.1_x64-setup.exe"
     }
   }
 }

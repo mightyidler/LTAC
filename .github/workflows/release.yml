@@ -25,6 +25,7 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: '1.95.0'
           components: rustfmt, clippy
       - uses: actions/cache@v4
         with:

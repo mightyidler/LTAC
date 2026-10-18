@@ -1,5 +1,11 @@
 {
   "version": "0.1.0",
   "notes": "LTAC 0.1.0",
-  "platforms": {}
+  "pub_date": "2026-10-18T11:12:53.496Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUem5UZVBwR1pqN2xON3BZb09seUhPdkNYVVdseWRtOHFmcTZvQTE2K3JrcmJKVTVlMmNFckU1NVNhZkd6SmZXMHoyZkhGdXRhcTMwZmNwRnZGZ3loZmttOTlGS25xTFFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzIxOTY5CWZpbGU6TFRBQ18wLjEuMF94NjQtc2V0dXAuZXhlCXZlcnNpb246MC4xLjAKanI1OGVDcU1GNVRnMjdMYXJZalJhNmJpT3N5dFpTYzVldm9oK0R6ejA4L2QySEJVczBnMWx4cnNFem1nUnloZ213RDFWSk9XdTdLbnVoWk5NdnRTQWc9PQo=",
+      "url": "https://github.com/mightyidler/LTAC/releases/download/v0.1.0/LTAC_0.1.0_x64-setup.exe"
+    }
+  }
 }

@@ -27,7 +27,8 @@ jobs:
         with:
           toolchain: '1.95.0'
           components: rustfmt, clippy
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: rust-cache
         with:
           path: |
             ~/.cargo/registry
@@ -50,6 +51,16 @@ jobs:
       - run: cargo test --locked --all-targets
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
       - run: npm test
+      - name: Save verified build dependencies
+        if: steps.rust-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            src-tauri/target
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
       - name: Build and sign installer including power service
         uses: tauri-apps/tauri-action@v0
         env:

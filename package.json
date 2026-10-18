@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "tauri": "tauri",
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "desktop": "tauri dev",

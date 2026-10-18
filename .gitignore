@@ -1,0 +1,29 @@
+/target/
+/local/
+/node_modules/
+/web-dist/
+/src-tauri/target/
+/src-tauri/gen/
+/releases/
+*.jsonl
+!docs/evidence/*.jsonl
+*.lock.tmp
+
+# Local configuration and credentials must never enter source control.
+.env
+.env.*
+*.env
+*.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.secret
+*.secrets.*
+.secrets/
+.credentials/
+
+# Local TV diagnostics and packaged binaries are not source artifacts.
+/docs/evidence/
+/deliverables/
+

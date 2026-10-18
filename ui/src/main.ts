@@ -141,6 +141,7 @@ function renderForm(backward: boolean) {
   if (!mount(key, `<form id="manual-form" class="form-page"><div class="page-scroll">${title(editing ? '정보 수정' : '직접 입력')}<div class="field-group"><label>IP 주소</label>${segments('ip', 4, '0')}</div><div class="field-group"><label>${editing ? 'MAC 주소' : 'MAC 주소 (선택)'}</label>${segments('mac', 6, '00')}</div><p id="form-error" class="form-error" role="alert"></p></div><footer class="page-footer">${action(editing ? '저장' : '연결', 'submit-manual', true, !editing)}</footer></form>`, backward)) return;
   const form = el<HTMLFormElement>('manual-form');
   const allFields = Array.from(form.querySelectorAll<HTMLInputElement>('input'));
+  allFields.forEach(input => input.tabIndex = 0);
   if (editing) {
     form.querySelectorAll<HTMLInputElement>('.ip input').forEach((input, i) => input.value = editing!.ip.split('.')[i] ?? '');
     form.querySelectorAll<HTMLInputElement>('.mac input').forEach((input, i) => input.value = editing!.mac?.split(':')[i] ?? '');
@@ -400,7 +401,13 @@ window.addEventListener('keydown', async event => {
     if (!saved) { state.error = null; lastError = null; shortcutHint = '다른 키 사용'; }
     renderHome(false); return;
   }
-  if (event.key === 'Tab' && app.contains(document.activeElement)) { event.preventDefault(); return; }
+  if (event.key === 'Tab' && app.contains(document.activeElement)) {
+    event.preventDefault();
+    const fields = Array.from(current().querySelectorAll<HTMLInputElement>('#manual-form input'));
+    const index = fields.indexOf(document.activeElement as HTMLInputElement);
+    if (index >= 0) fields[(index + (event.shiftKey ? -1 : 1) + fields.length) % fields.length].focus({ preventScroll: true });
+    return;
+  }
   if (activeMenu) {
     if (event.key === 'Escape') { event.preventDefault(); closeMenu(true); }
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {

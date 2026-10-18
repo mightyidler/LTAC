@@ -6,6 +6,13 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$script:installationLog = $null
+trap {
+    $failure = "$(Get-Date -Format o) $Action failed: $($_.Exception.Message)`r`n$($_.ScriptStackTrace)"
+    if ($script:installationLog) { [IO.File]::AppendAllText($script:installationLog, $failure + "`r`n", [Text.UTF8Encoding]::new($false)) }
+    Write-Error $failure -ErrorAction Continue
+    exit 1
+}
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Administrator installation is required.' }
@@ -49,6 +56,9 @@ foreach ($folder in @((Join-Path $env:ProgramData 'LTAC'), $data)) {
     }
     Set-Acl -LiteralPath $folder -AclObject $acl
 }
+$script:installationLog = Join-Path $data 'installation.log'
+if ((Test-Path -LiteralPath $script:installationLog) -and ((Get-Item -LiteralPath $script:installationLog -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { $script:installationLog = $null; throw 'Linked installation log refused.' }
+[IO.File]::AppendAllText($script:installationLog, "$(Get-Date -Format o) Installing service from $install`r`n", [Text.UTF8Encoding]::new($false))
 if (-not (Test-Path -LiteralPath $settingsPath)) {
     $settings = @{ owner_sid = $ownerSid; automatic = $true } | ConvertTo-Json
     [IO.File]::WriteAllText($settingsPath, $settings, [Text.UTF8Encoding]::new($false))
@@ -67,8 +77,9 @@ if ($service) {
     $result = Invoke-CimMethod -ClassName Win32_Service -MethodName Create -Arguments $arguments
 }
 if ($result.ReturnValue -ne 0) { throw "Service registration failed: $($result.ReturnValue)" }
+$configuration = Start-Process -FilePath $binary -ArgumentList '--configure-service' -WindowStyle Hidden -Wait -PassThru
+if ($configuration.ExitCode -ne 0) { throw 'Native preshutdown timeout configuration or readback failed.' }
 foreach ($command in @(
-    @('preshutdown','LTACPower','6000'),
     @('failure','LTACPower','reset=','86400','actions=','restart/1000/restart/5000/restart/15000'),
     @('failureflag','LTACPower','1')
 )) {
@@ -79,3 +90,5 @@ foreach ($command in @(
 [IO.File]::WriteAllText((Join-Path $data 'skip-boot-wake'), '', [Text.UTF8Encoding]::new($false))
 Start-Service -Name LTACPower
 (Get-Service -Name LTACPower).WaitForStatus('Running', [TimeSpan]::FromSeconds(10))
+[IO.File]::AppendAllText($script:installationLog, "$(Get-Date -Format o) Service is running; preshutdown timeout verified at 6000 ms.`r`n", [Text.UTF8Encoding]::new($false))
+exit 0

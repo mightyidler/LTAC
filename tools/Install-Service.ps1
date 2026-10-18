@@ -107,7 +107,7 @@ if ($existing) {
 if ($registration.ReturnValue -ne 0) { throw "Service registration failed: $($registration.ReturnValue)" }
 & $sc description LTACPower 'LG TV power control before logon, with bounded preshutdown OFF.'
 if ($LASTEXITCODE -ne 0) { throw 'Service description failed.' }
-& $sc preshutdown LTACPower 6000
+& (Join-Path $install 'ltac-service.exe') --configure-service
 if ($LASTEXITCODE -ne 0) { throw 'Preshutdown configuration failed.' }
 & $sc failure LTACPower reset= 86400 actions= restart/1000/restart/5000/restart/15000
 if ($LASTEXITCODE -ne 0) { throw 'Failure recovery configuration failed.' }

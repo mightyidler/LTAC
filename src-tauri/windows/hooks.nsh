@@ -14,7 +14,7 @@
   nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\Manage-Service.ps1" -Action Install -InstallDirectory "$INSTDIR"'
   Pop $0
   ${If} $0 != 0
-    Abort "LTAC power service installation failed. Run the installer again."
+    Abort "LTAC power service installation failed (exit $0). See ProgramData\LTAC\Service\installation.log for details."
   ${EndIf}
 !macroend
 

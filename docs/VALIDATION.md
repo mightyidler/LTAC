@@ -1,3 +1,16 @@
+# 0.1.1 수정 검증
+
+2026-10-19, Asia/Seoul.
+
+- 설치 오류를 Windows PowerShell 5.1 x86에서 재현: `sc.exe preshutdown`은 지원되지 않는 명령으로 1639를 반환했습니다. `ChangeServiceConfig2W`와 `QueryServiceConfig2W`로 교체한 뒤 실제 설치 스크립트의 종료 코드 0, 서비스 Running, 종료 대기값 6000ms 재조회를 확인했습니다. TV가 없는 서비스 설정에서 수행했으며 TV 전원은 제어하지 않았습니다.
+- 동일 PC의 읽기 전용 SSDP 검색에서 LG TV 1대가 발견되었습니다. 최초 앱 시작의 검색은 초기화 작업 잠금을 해제한 뒤 실행하도록 수정했습니다.
+- Rust 코어 32개·데스크톱 4개 테스트, Clippy, TypeScript/Vite 빌드, 기존 UI 회귀 검사를 통과했습니다.
+- 브라우저에서 IP 1→2, Shift+Tab 2→1, IP 마지막→MAC 첫 칸, MAC 마지막→IP 첫 칸 순환과 포커스 테두리를 확인했습니다. 창 경계는 내용 배치를 유지한 1px inset shadow입니다.
+- CI 공개 전 검증에 실제 NSIS 신규 설치·재설치·서비스 API 설정 확인·설치된 앱의 최초 검색 완료·제거를 추가했습니다. 이 테스트는 TV 설정이 없는 일회용 GitHub runner에서만 실행됩니다.
+- 실제 TV OFF/ON, PC 절전·재부팅·시스템 종료 시험은 실행하지 않았습니다.
+
+---
+
 # 0.1.0 검증 기록
 
 2026-10-18, Asia/Seoul. **사용자 요청: 실제 전원 시험 없이 자동 검증만 진행.**

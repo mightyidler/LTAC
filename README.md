@@ -1,8 +1,10 @@
 # LTAC
 
-**LG TV Auto Control · 0.1.0**
+**LG TV Auto Control · 0.1.1**
 
 Windows PC의 시작·화면 상태·절전·종료에 맞춰 LG webOS TV 전원을 제어합니다. Rust 전원 코어와 Windows 서비스, Tauri 데스크톱 UI로 구성됩니다.
+
+0.1.1은 Windows 서비스 설치 실패(`sc.exe preshutdown` 호출), 최초 장치 검색 시작의 중첩 잠금, 직접 입력 포커스 테두리를 수정합니다. 창 외곽선은 1px 안쪽 그림자로 표시하며 직접 입력에서 Tab·Shift+Tab으로 IP/MAC 필드를 순환합니다.
 
 ## 설치
 

@@ -12,6 +12,64 @@ pub const NAME: &str = "LTACPower";
 pub const PIPE: &str = r"\\.\pipe\LTAC.Power.v1";
 pub const MAX_FRAME: u64 = 65536;
 
+/// Installer-only administrative operation; never starts the service or sends
+/// a power command. sc.exe does not expose a `preshutdown` command on Windows.
+pub fn configure_preshutdown() -> Result<()> {
+    unsafe {
+        let scm = OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_CONNECT);
+        anyhow::ensure!(
+            !scm.is_null(),
+            "Open service manager: {}",
+            std::io::Error::last_os_error()
+        );
+        let service = OpenServiceW(
+            scm,
+            wide(NAME).as_ptr(),
+            SERVICE_CHANGE_CONFIG | SERVICE_QUERY_CONFIG,
+        );
+        let error = std::io::Error::last_os_error();
+        CloseServiceHandle(scm);
+        anyhow::ensure!(
+            !service.is_null(),
+            "Open LTAC service configuration: {error}"
+        );
+        let result = (|| {
+            let value = SERVICE_PRESHUTDOWN_INFO {
+                dwPreshutdownTimeout: 6000,
+            };
+            if ChangeServiceConfig2W(
+                service,
+                SERVICE_CONFIG_PRESHUTDOWN_INFO,
+                (&value as *const SERVICE_PRESHUTDOWN_INFO).cast(),
+            ) == 0
+            {
+                return Err(std::io::Error::last_os_error()).context("Set preshutdown timeout");
+            }
+            let mut actual = SERVICE_PRESHUTDOWN_INFO {
+                dwPreshutdownTimeout: 0,
+            };
+            let mut needed = 0;
+            if QueryServiceConfig2W(
+                service,
+                SERVICE_CONFIG_PRESHUTDOWN_INFO,
+                (&mut actual as *mut SERVICE_PRESHUTDOWN_INFO).cast(),
+                std::mem::size_of_val(&actual) as u32,
+                &mut needed,
+            ) == 0
+            {
+                return Err(std::io::Error::last_os_error()).context("Read preshutdown timeout");
+            }
+            anyhow::ensure!(
+                actual.dwPreshutdownTimeout == 6000,
+                "Preshutdown timeout was not applied"
+            );
+            Ok(())
+        })();
+        CloseServiceHandle(service);
+        result
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {

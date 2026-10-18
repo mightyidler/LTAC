@@ -5,6 +5,7 @@ import { basename, resolve } from 'node:path';
 const installer = process.argv[2];
 if (!installer?.endsWith('-setup.exe')) throw new Error('Pass the signed NSIS -setup.exe path.');
 const config = JSON.parse(await readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
+if (basename(installer) !== `LTAC_${config.version}_x64-setup.exe`) throw new Error('Installer filename does not match the release version.');
 const signature = (await readFile(resolve(`${installer}.sig`), 'utf8')).trim();
 if (!signature) throw new Error('Installer signature is empty.');
 const manifest = {

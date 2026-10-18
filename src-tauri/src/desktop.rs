@@ -938,11 +938,15 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     tauri::async_runtime::spawn(async move {
         let state = handle.state::<Desktop>();
         let _operation = state.operation.lock().await;
+        if !configured {
+            // Discovery owns this lock itself. Do not gate first-run discovery
+            // on service configuration or recursively acquire the same lock.
+            drop(_operation);
+            let _ = do_discover(&state, &handle).await;
+            return;
+        }
         if state.service_mode {
             resume_automatic(&state, &handle, preferences.automatic).await;
-            if !configured {
-                let _ = do_discover(&state, &handle).await;
-            }
             return;
         }
         if read(&state).is_ok_and(|s| s.automatic)
@@ -1023,7 +1027,7 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     let handle = app.handle().clone();
     tauri::async_runtime::spawn(async move {
         let state = handle.state::<Desktop>();
-        if state.service_mode {
+        if state.service_mode || !configured {
             return;
         }
         // Automatic startup is already armed above; no redundant status lookup.

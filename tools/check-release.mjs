@@ -25,7 +25,7 @@ if (process.argv.includes('--package')) {
   }
   const { readdir } = await import('node:fs/promises');
   const directory = new URL('../src-tauri/target/release/bundle/nsis/', import.meta.url);
-  const installers = (await readdir(directory)).filter(name => name.endsWith('-setup.exe'));
+  const installers = (await readdir(directory)).filter(name => name.endsWith('-setup.exe') && name.includes(`_${version}_`));
   assert.equal(installers.length, 1);
   assert.ok(installers[0].includes(`_${version}_`));
   assert.ok((await readFile(new URL(`${installers[0]}.sig`, directory), 'utf8')).trim());

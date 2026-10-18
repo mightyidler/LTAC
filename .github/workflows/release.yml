@@ -36,6 +36,7 @@ jobs:
             target
             src-tauri/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
       - run: npm ci
       - name: Verify matching versions and tag
         shell: pwsh
@@ -74,6 +75,7 @@ jobs:
             LG webOS TV power control for Windows x64.
             Includes the desktop app, CLI, and automatic boot/preshutdown power service.
             Signed in-app updates use main/update.json, as in Bald.
+            Fixes service installation and first-run discovery; adds a 1px inset outline and Tab navigation in direct entry.
             Actual TV power, sleep, reboot and shutdown tests were excluded at the user's request. See docs/VALIDATION.md.
           releaseDraft: true
           prerelease: false
@@ -82,11 +84,19 @@ jobs:
       - name: Verify packaged resources and generate manifest
         shell: pwsh
         run: |
-          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $installer = Get-Item "src-tauri/target/release/bundle/nsis/LTAC_${version}_x64-setup.exe"
           if (-not $installer) { throw 'Installer missing' }
           node tools/check-release.mjs --package
           node tools/verify-update.mjs $installer.FullName
           node tools/publish-update.mjs $installer.FullName
+      - name: Verify actual installer and first-run desktop lifecycle
+        shell: pwsh
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $installer = Get-Item "src-tauri/target/release/bundle/nsis/LTAC_${version}_x64-setup.exe"
+          powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tools/check-installer.ps1 -Installer $installer.FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Installer lifecycle regression failed' }
       - name: Publish verified release
         run: gh release edit "$env:GITHUB_REF_NAME" --draft=false
         env:

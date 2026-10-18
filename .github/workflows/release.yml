@@ -72,11 +72,16 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'LTAC ${{ github.ref_name }}'
           releaseBody: |
-            LG webOS TV power control for Windows x64.
-            Includes the desktop app, CLI, and automatic boot/preshutdown power service.
-            Signed in-app updates use main/update.json, as in Bald.
-            Fixes service installation and first-run discovery; adds a 1px inset outline and Tab navigation in direct entry.
-            Actual TV power, sleep, reboot and shutdown tests were excluded at the user's request. See docs/VALIDATION.md.
+            Windows x64용 LG webOS TV 자동 전원 제어.
+
+            - 이미 연결된 TV는 추가 검색에서 제외하고 장치 이름을 짧게 표시합니다.
+            - 전원 동기화 초기값 ON, 절전 권한 오류 998 및 실패·복귀 시 TV 복구 처리를 수정했습니다.
+            - TV 승인 후 완료 모션 4초와 체크·확인 표시를 끝낸 뒤 홈으로 부드럽게 이동합니다.
+            - 배포 CSS의 초/밀리초 해석 오류를 수정했습니다. 실제 설치 앱에서도 약 4초 재생을 측정했습니다.
+            - 앱·트레이·작업 표시줄·바로가기·설치 및 제거 화면에 새 아이콘을 적용했습니다.
+
+            데스크톱 앱·CLI·Windows 전원 서비스와 서명된 앱 내 업데이트를 포함합니다.
+            실제 TV 전원·PC 절전·재부팅·종료 통합 시험은 이번 변경에서 실행하지 않았습니다. 검증 범위는 docs/VALIDATION.md를 참고하세요.
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: false

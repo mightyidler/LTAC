@@ -1,5 +1,15 @@
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
-export const duration = (name: string, fallback: number, node: Element = document.documentElement) => reduced() ? 0 : parseFloat(getComputedStyle(node).getPropertyValue(name)) || fallback;
+// Production CSS minification rewrites 4000ms → 4s and 500ms → .5s.
+// Custom properties retain that unit; parseFloat alone turns seconds into ms.
+export function cssTimeMs(value: string, fallback: number): number {
+  const time = value.trim();
+  if (time === '0') return 0;
+  const match = time.match(/^(\d*\.?\d+)(ms|s)$/i);
+  if (!match) return fallback;
+  const ms = Number(match[1]) * (match[2].toLowerCase() === 's' ? 1000 : 1);
+  return Number.isFinite(ms) ? ms : fallback;
+}
+export const duration = (name: string, fallback: number, node: Element = document.documentElement) => reduced() ? 0 : cssTimeMs(getComputedStyle(node).getPropertyValue(name), fallback);
 export const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const swaps = new WeakMap<HTMLElement, symbol>();
 const pendingTexts = new WeakMap<HTMLElement, string>();

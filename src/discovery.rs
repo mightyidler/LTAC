@@ -20,6 +20,58 @@ pub struct DeviceIdentity {
     pub model: String,
 }
 
+impl DeviceIdentity {
+    /// Keep the identity intact for matching; shorten only its display label.
+    pub fn display_name(&self) -> String {
+        let mut name = self.name.trim();
+        for prefix in ["[LG]", "LG", "webOS", "TV"] {
+            if name
+                .get(..prefix.len())
+                .is_some_and(|s| s.eq_ignore_ascii_case(prefix))
+                && name
+                    .get(prefix.len()..)
+                    .is_some_and(|s| s.is_empty() || s.starts_with(char::is_whitespace))
+            {
+                name = name[prefix.len()..].trim_start();
+            }
+        }
+        if name.is_empty() {
+            if self.model.trim().is_empty() {
+                "LG TV".into()
+            } else {
+                self.model.trim().into()
+            }
+        } else {
+            name.into()
+        }
+    }
+}
+
+#[cfg(test)]
+mod display_tests {
+    use super::*;
+
+    #[test]
+    fn short_labels_preserve_model_and_custom_names() {
+        for (name, expected) in [
+            ("[LG] webOS TV OLED42C4ENA", "OLED42C4ENA"),
+            (" LG webOS TV OLED42C4ENA ", "OLED42C4ENA"),
+            ("OLED42C4ENA", "OLED42C4ENA"),
+            ("Living room", "Living room"),
+            ("LGallery", "LGallery"),
+            ("[LG] webOS TV", "OLED42C4ENA"),
+        ] {
+            let identity = DeviceIdentity {
+                id: "uuid:example".into(),
+                name: name.into(),
+                model: "OLED42C4ENA".into(),
+            };
+            assert_eq!(identity.display_name(), expected);
+            assert_eq!(identity.name, name);
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Device {
     #[serde(flatten)]

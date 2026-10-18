@@ -2,7 +2,7 @@ import { appUpdateState, checkAppUpdate, connect, command, desktop, windowAction
 import { initialState, type Device, type Snapshot } from './model';
 import { ConnectionIndicator } from './connection-indicator';
 import { cleanSegment, validMacSegments, shortcutFromEvent, shortcutLabel } from './input';
-import { duration, pause, swapText, swapButtonLabel, swapShortcutLabel, syncRows, transitionPages, pageTransitionMode, revealChoices } from './motion';
+import { cssTimeMs, pause, swapText, swapButtonLabel, swapShortcutLabel, syncRows, transitionPages, pageTransitionMode, revealChoices } from './motion';
 import { AppUpdate } from './update';
 import { Toast } from './toast';
 import { applyPalette } from './palette';
@@ -46,6 +46,9 @@ let addingDevice = false;
 let editing: Device | null = null;
 let localBusy = false;
 let generation = 0;
+// Native ready/status events must not own navigation during the result motion.
+let pairingToken: number | null = null;
+let pendingPairSnapshot: Snapshot | null = null;
 let indicator: ConnectionIndicator | null = null;
 let capture = false;
 let shortcutSaving = false;
@@ -230,20 +233,30 @@ function renderFailure() {
   connectionCopy('failure');
   if (mounted) indicator!.showResult('failure');
 }
+function latestPairResult(result: Snapshot): Snapshot {
+  return pendingPairSnapshot?.stage === result.stage ? pendingPairSnapshot : result;
+}
 async function finishConnection(result: Snapshot, token: number) {
   if (token !== generation) return;
+  pendingPairSnapshot = null;
   // Pairing may succeed while automatic-sync setup reports a separate home error.
   const outcome = result.stage === 'ready' ? 'success' : 'failure';
-  await indicator?.finish(outcome, () => { if (token === generation) connectionCopy(outcome); });
+  await indicator!.finish(outcome, () => { if (token === generation) connectionCopy(outcome); });
   if (token !== generation) return;
-  state = result;
   if (outcome === 'success') {
-    await pause(duration('--connection-result-hold', 900, el('connection-indicator')));
-    if (token === generation) render();
-  } else { state.stage = 'pair_error'; renderFailure(); }
+    // This is reading time, including when motion itself is reduced.
+    const hold = cssTimeMs(getComputedStyle(el('connection-indicator')).getPropertyValue('--connection-result-hold'), 900);
+    await pause(hold);
+  }
+  if (token !== generation) return;
+  state = latestPairResult(result);
+  pairingToken = null; pendingPairSnapshot = null;
+  if (outcome === 'success') { render(); reportError(state.error); }
+  else { state.stage = 'pair_error'; renderFailure(); }
 }
 async function pair(args: Record<string, unknown>, label: string) {
   const token = ++generation;
+  pairingToken = token; pendingPairSnapshot = null;
   pairArgs = args; pairingLabel = label; manual = false; editing = null;
   state = { ...state, stage: 'pairing', error: null }; renderPair(true);
   try { await finishConnection(await command('pair_tv', args), token); }
@@ -359,6 +372,7 @@ async function run(name: string, args?: Record<string, unknown>, announce = true
 }
 async function search() {
   const token = ++generation;
+  pairingToken = null; pendingPairSnapshot = null;
   localBusy = false; capture = false; selected = null; manual = false; editing = null;
   if (view === 'choose') el('list-scroll').scrollTop = 0;
   state = { ...state, stage: 'searching', choices: [], busy: true }; render();
@@ -371,7 +385,7 @@ async function search() {
 async function goBack() {
   // Returning from direct entry must keep an ongoing discovery request alive.
   if (manual) { manual = false; render(true); return; }
-  generation++; localBusy = false; indicator?.stop(); capture = false;
+  generation++; pairingToken = null; pendingPairSnapshot = null; localBusy = false; indicator?.stop(); capture = false;
   if (editing) { editing = null; render(true); return; }
   if (await run('cancel_connection')) { addingDevice = false; view = ''; render(true); }
 }
@@ -419,7 +433,7 @@ window.addEventListener('keydown', async event => {
 }, true);
 if (previewModule) {
   previewModule.installPreview(async (patch, screen) => {
-    generation++; localBusy = false; indicator?.stop(); manual = screen.startsWith('manual'); addingDevice = false; editing = null; selected = screen === 'selected' || screen === 'scroll' ? 'tv-0' : null;
+    generation++; pairingToken = null; pendingPairSnapshot = null; localBusy = false; indicator?.stop(); manual = screen.startsWith('manual'); addingDevice = false; editing = null; selected = screen === 'selected' || screen === 'scroll' ? 'tv-0' : null;
     pairingLabel = screen.includes('manual') ? '192.168.0.21' : patch.name;
     pairArgs = screen.includes('manual') ? { deviceId: null, ip: '192.168.0.21', mac: null } : { deviceId: 'tv-0', ip: null, mac: null };
     state = { ...initialState, ...patch }; view = ''; render();
@@ -436,7 +450,7 @@ if (previewModule) {
   });
 } else {
   try { await connect(next => {
-    if (state.stage === 'pairing' && next.stage !== 'pairing') return;
+    if (pairingToken !== null) { pendingPairSnapshot = next; return; }
     state = { ...initialState, ...next }; if (!manual && !editing) render(); reportError(state.error);
   }); } catch { state.stage = 'not_found'; render(); }
 }

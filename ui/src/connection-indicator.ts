@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { palette } from './palette';
 import { RibbonCurve, indicatorShape, ringRadii, completionPose } from './connection-motion';
+import { cssTimeMs } from './motion';
 
 const white = new THREE.Color(0xffffff);
 const failureRed = new THREE.Color().setRGB(palette.red[0] / 255, palette.red[1] / 255, palette.red[2] / 255, THREE.SRGBColorSpace);
@@ -89,7 +90,7 @@ export class ConnectionIndicator {
     this.onRing = onRing ?? null;
     this.completionStart = performance.now();
     this.completionRotation = this.ribbon.rotation.x;
-    this.completionDuration = parseFloat(getComputedStyle(this.host).getPropertyValue('--indicator-complete-dur')) || 4000;
+    this.completionDuration = cssTimeMs(getComputedStyle(this.host).getPropertyValue('--indicator-complete-dur'), 4000);
     this.host.dataset.state = 'completing';
     if (this.reduced.matches) this.frame = requestAnimationFrame(this.animate);
     return new Promise<void>(resolve => { this.resolve = resolve; });
@@ -127,8 +128,8 @@ export class ConnectionIndicator {
       const paths = this.outcome === 'success' ? ['M5 12l4.5 4.5L19 7'] : ['M7 7l10 10', 'M17 7L7 17'];
       result.querySelector('svg')!.innerHTML = paths.map(d => `<path d="${d}" stroke="currentColor" stroke-width="${indicatorShape.stroke}" stroke-linecap="round" stroke-linejoin="round"/>`).join('');
       const style = getComputedStyle(this.host);
-      const delay = parseFloat(style.getPropertyValue('--check-path-delay')) || 0;
-      const stagger = parseFloat(style.getPropertyValue('--indicator-cross-stagger')) || 0;
+      const delay = cssTimeMs(style.getPropertyValue('--check-path-delay'), 0);
+      const stagger = cssTimeMs(style.getPropertyValue('--indicator-cross-stagger'), 0);
       result.querySelectorAll('path').forEach((path, index) => {
         const length = Math.ceil(path.getTotalLength()) + 1;
         path.style.strokeDasharray = String(length);
@@ -137,7 +138,7 @@ export class ConnectionIndicator {
       });
       void result.offsetWidth;
       result.dataset.state = 'in';
-      const duration = this.reduced.matches ? 0 : parseFloat(style.getPropertyValue('--check-path-dur')) + delay + (paths.length - 1) * stagger;
+      const duration = this.reduced.matches ? 0 : cssTimeMs(style.getPropertyValue('--check-path-dur'), 500) + delay + (paths.length - 1) * stagger;
       this.completionTimer = window.setTimeout(() => { this.resolve?.(); this.resolve = null; }, duration || 0);
       return;
     }

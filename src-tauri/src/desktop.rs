@@ -83,6 +83,7 @@ pub struct Desktop {
     pair_cancel: tokio::sync::Notify,
     discovery_cancel: tokio::sync::Notify,
     hotkey: ui::Hotkey,
+    shortcut_sleep: std::sync::atomic::AtomicBool,
     _lock: File,
 }
 
@@ -128,7 +129,7 @@ fn apply_config(s: &mut Snapshot, config: &Config) {
     s.name = config
         .device
         .as_ref()
-        .map(|d| d.name.clone())
+        .map(|d| d.display_name())
         .unwrap_or_else(|| "LG webOS TV".into());
     s.wake_available = config.mac.is_some();
     s.wake_verified = config.wake_verified;
@@ -413,12 +414,10 @@ async fn do_automatic(
         .map_err(|_| "다른 작업을 처리 중입니다.".to_owned())?;
     if state.service_mode {
         let previous = read(state)?.automatic;
-        let result = service_request(
-            state,
-            app,
-            ltac::service_ipc::Request::Automatic { enabled },
-        )
-        .await?;
+        let remote = ltac::service_ipc::request(ltac::service_ipc::Request::Automatic { enabled })
+            .await
+            .map_err(|e| e.to_string())?;
+        apply_service(state, app, remote);
         if let Err(error) = save_preferences(&state.path, enabled) {
             let _ = service_request(
                 state,
@@ -428,7 +427,8 @@ async fn do_automatic(
             .await;
             return Err(error.to_string());
         }
-        return Ok(result);
+        update(&state.view, app, |s| s.automatic = enabled);
+        return read(state);
     }
     stop_watcher(state).await;
     if enabled && let Err(error) = start_watcher(state, app, None).await {
@@ -483,7 +483,9 @@ async fn do_discover(
         _ = &mut cancelled => return read(state),
     };
     match result {
-        Ok(devices) => {
+        Ok(mut devices) => {
+            let saved = ui::configs(&state.path).map_err(|e| e.to_string())?;
+            devices.retain(|device| !ui::already_saved(device, &saved));
             let _ = state
                 .journal
                 .clone()
@@ -492,7 +494,7 @@ async fn do_discover(
                 .iter()
                 .map(|d| Choice {
                     id: d.identity.id.clone(),
-                    name: d.identity.name.clone(),
+                    name: d.identity.display_name(),
                     model: d.identity.model.clone(),
                 })
                 .collect::<Vec<_>>();
@@ -601,15 +603,16 @@ async fn pair_tv(
             .map_err(|e| e.to_string())?;
     let pairing_path = pairing_directory.path().join("config.json");
     let saved_devices = ui::configs(&state.path).map_err(|e| e.to_string())?;
-    if let Some(saved) = saved_devices.iter().find(|saved| {
-        device
-            .as_ref()
-            .is_some_and(|d| saved.device.as_ref().is_some_and(|s| s.id == d.identity.id))
-            || ip
-                .as_ref()
-                .is_some_and(|address| address == &saved.ip.to_string())
-    }) {
-        saved.save(&pairing_path).map_err(|e| e.to_string())?;
+    if device
+        .as_ref()
+        .is_some_and(|device| ui::already_saved(device, &saved_devices))
+        || ip.as_ref().is_some_and(|ip| {
+            saved_devices
+                .iter()
+                .any(|saved| saved.ip.to_string() == *ip)
+        })
+    {
+        return Err("이미 연결된 TV입니다. 기기 목록에서 확인해주세요.".into());
     }
     let cancelled = state.pair_cancel.notified();
     tokio::pin!(cancelled);
@@ -739,7 +742,9 @@ fn show(app: &tauri::AppHandle) {
 fn apply_service(state: &Desktop, app: &tauri::AppHandle, remote: ltac::service_ipc::Snapshot) {
     update(&state.view, app, |s| {
         s.power = remote.power;
-        s.automatic = remote.automatic;
+        if s.configured {
+            s.automatic = remote.automatic;
+        }
         s.busy = remote.busy;
         s.checked_at = remote.checked_at;
         s.error = remote.error.map(|_| {
@@ -802,7 +807,7 @@ fn setup(app: &mut tauri::App) -> Result<()> {
         wake_available: false,
         wake_verified: false,
         power: "unknown".into(),
-        automatic: preferences.automatic && configured,
+        automatic: preferences.automatic,
         autostart: app.autolaunch().is_enabled()?,
         service_mode,
         busy: false,
@@ -815,7 +820,6 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     if let Some(config) = &config {
         apply_config(&mut initial_view, config);
     }
-    initial_view.automatic &= initial_view.wake_available;
     let view = Arc::new(RwLock::new(initial_view));
     let observer_view = view.clone();
     let observer_app = app.handle().clone();
@@ -828,13 +832,11 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     let (native_sender, mut native_events) = tokio::sync::mpsc::unbounded_channel();
     // Register once for the entire desktop lifetime, including manual commands
     // and intervals where automatic synchronization is disabled.
-    let source = if service_mode {
-        None
-    } else {
-        Some(tauri::async_runtime::block_on(
-            ltac::windows_events::Source::start(native_sender, true),
-        )?)
-    };
+    // The desktop also needs interactive resume for a one-shot sleep shortcut
+    // when the service's automatic policy is disabled.
+    let source = Some(tauri::async_runtime::block_on(
+        ltac::windows_events::Source::start(native_sender, true),
+    )?);
     let hotkey = ui::Hotkey::start(app.handle().clone());
     if preferences.shortcut_enabled
         && let Err(error) = hotkey.set(preferences.shortcut.clone())
@@ -857,6 +859,7 @@ fn setup(app: &mut tauri::App) -> Result<()> {
         pair_cancel: tokio::sync::Notify::new(),
         discovery_cancel: tokio::sync::Notify::new(),
         hotkey,
+        shortcut_sleep: std::sync::atomic::AtomicBool::new(false),
         _lock: lock,
     });
 
@@ -893,6 +896,19 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     tauri::async_runtime::spawn(async move {
         while let Some(notice) = native_events.recv().await {
             let state = handle.state::<Desktop>();
+            if notice.event == Event::ResumeInteractive
+                && state
+                    .shortcut_sleep
+                    .swap(false, std::sync::atomic::Ordering::AcqRel)
+            {
+                let app = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = app.state::<Desktop>();
+                    if let Err(error) = ui::restore_after_sleep(&state, &app).await {
+                        fail(&state, &app, &format!("sleep resume: {error:#}"));
+                    }
+                });
+            }
             let mut pending = Some(notice);
             if let Ok(mut route) = state.events.write() {
                 let notice = pending.as_ref().expect("Pending native event");
@@ -912,7 +928,10 @@ fn setup(app: &mut tauri::App) -> Result<()> {
             if let Some(notice) = pending {
                 // Manual power commands temporarily own the TV connection.
                 // A confirmed shutdown still cancels ON and attempts OFF.
-                if notice.event == Event::SessionEnding && read(&state).is_ok_and(|s| s.automatic) {
+                if !state.service_mode
+                    && notice.event == Event::SessionEnding
+                    && read(&state).is_ok_and(|s| s.automatic)
+                {
                     let result = tokio::time::timeout(Duration::from_millis(1400), async {
                         let config = Config::load(&state.path)?;
                         controller::off(&config, &mut state.journal.clone()).await
@@ -975,12 +994,16 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     )?;
     let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &automatic, &quit])?;
-    TrayIconBuilder::with_id("ltac")
-        .icon(
-            app.default_window_icon()
-                .context("Missing LTAC icon")?
-                .clone(),
+    // Select the original-derived ICO entry at the tray's native pixel size.
+    // The window's default icon uses the larger taskbar size.
+    let tray_size = unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::GetSystemMetrics(
+            windows_sys::Win32::UI::WindowsAndMessaging::SM_CXSMICON,
         )
+    }
+    .max(16) as u32;
+    TrayIconBuilder::with_id("ltac")
+        .icon(tauri::image::Image::from_app_icon_resource(tray_size)?)
         .tooltip("LTAC · LG TV Auto Control")
         .menu(&menu)
         .show_menu_on_left_click(false)

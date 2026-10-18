@@ -23,6 +23,16 @@ pub(super) fn configs(path: &Path) -> Result<Vec<Config>> {
     paths.into_iter().map(|path| Config::load(&path)).collect()
 }
 
+pub(super) fn already_saved(device: &Device, saved: &[Config]) -> bool {
+    saved.iter().any(|config| {
+        config.ip == device.ip
+            || config
+                .device
+                .as_ref()
+                .is_some_and(|identity| identity.id.eq_ignore_ascii_case(&device.identity.id))
+    })
+}
+
 pub(super) fn remember(path: &Path, config: &Config) -> Result<()> {
     let existing = configs(path)?;
     if let Some(previous) = existing.iter().find(|previous| {
@@ -68,7 +78,7 @@ pub(super) fn devices(path: &Path) -> Result<Vec<SavedDevice>> {
                 name: config
                     .device
                     .as_ref()
-                    .map(|d| d.name.clone())
+                    .map(|d| d.display_name())
                     .unwrap_or_else(|| config.ip.to_string()),
                 ip: config.ip.to_string(),
                 mac: config.mac.map(|m| m.to_string()),
@@ -409,45 +419,134 @@ async fn sleep_all(state: &Desktop, app: &tauri::AppHandle) -> Result<()> {
     if !read(state).map_err(anyhow::Error::msg)?.shortcut_enabled {
         return Ok(());
     }
+    // Fail before touching the TV if Windows cannot grant sleep permission.
+    tokio::task::spawn_blocking(|| with_sleep_privilege(|| Ok(()))).await??;
+    state
+        .shortcut_sleep
+        .store(true, std::sync::atomic::Ordering::Release);
+    let result = sleep_with_recovery(
+        async {
+            if state.service_mode {
+                // Propagate IPC failures, including transport failures that otherwise
+                // only update the UI snapshot.
+                let remote = ltac::service_ipc::request(ltac::service_ipc::Request::Off).await?;
+                apply_service(state, app, remote);
+            } else {
+                stop_watcher(state).await;
+                let all = configs(&state.path)?;
+                let mut tasks = tokio::task::JoinSet::new();
+                for config in all {
+                    let mut journal = state.journal.clone();
+                    tasks.spawn(async move { controller::off(&config, &mut journal).await });
+                }
+                let result = tokio::time::timeout(Duration::from_secs(5), async {
+                    while let Some(result) = tasks.join_next().await {
+                        result??;
+                    }
+                    Ok::<_, anyhow::Error>(())
+                })
+                .await;
+                result
+                    .context("TV 절전 요청 시간이 초과되었어요.")
+                    .and_then(|r| r)?;
+                if read(state).map_err(anyhow::Error::msg)?.automatic {
+                    start_watcher(
+                        state,
+                        app,
+                        Some(Initial {
+                            target: ltac::sync::Target::Off,
+                            session: None,
+                        }),
+                    )
+                    .await?;
+                }
+            }
+            Ok(())
+        },
+        async {
+            let _ = state
+                .journal
+                .clone()
+                .record("pc_suspend_requested", json!({}));
+            tokio::task::spawn_blocking(suspend_pc).await?
+        },
+        async {
+            state
+                .shortcut_sleep
+                .store(false, std::sync::atomic::Ordering::Release);
+            restore_after_sleep(state, app).await
+        },
+    )
+    .await;
+    let _ = state.journal.clone().record(
+        "pc_suspend_returned",
+        json!({
+            "success":result.is_ok(), "error":result.as_ref().err().map(|e|format!("{e:#}"))
+        }),
+    );
+    result
+}
+
+async fn sleep_with_recovery(
+    off: impl std::future::Future<Output = Result<()>>,
+    suspend: impl std::future::Future<Output = Result<()>>,
+    restore: impl std::future::Future<Output = Result<()>>,
+) -> Result<()> {
+    let result = async {
+        off.await?;
+        suspend.await
+    }
+    .await;
+    if let Err(error) = result {
+        return match restore.await {
+            Ok(()) => Err(error),
+            Err(recovery) => Err(error.context(format!("TV 복구 실패: {recovery:#}"))),
+        };
+    }
+    Ok(())
+}
+
+pub(super) async fn restore_after_sleep(state: &Desktop, app: &tauri::AppHandle) -> Result<()> {
     if state.service_mode {
-        let remote = service_request(state, app, ltac::service_ipc::Request::Off)
-            .await
-            .map_err(anyhow::Error::msg)?;
-        anyhow::ensure!(remote.error.is_none(), "TV 절전 요청을 완료하지 못했어요.");
+        let remote = ltac::service_ipc::request(ltac::service_ipc::Request::On).await?;
+        apply_service(state, app, remote);
     } else {
         stop_watcher(state).await;
-        let all = configs(&state.path)?;
         let mut tasks = tokio::task::JoinSet::new();
-        for config in all {
+        for config in configs(&state.path)? {
             let mut journal = state.journal.clone();
-            tasks.spawn(async move { controller::off(&config, &mut journal).await });
+            tasks.spawn(async move {
+                controller::wake_session(&config, &mut journal, Duration::from_secs(45))
+                    .await
+                    .map(|_| ())
+            });
         }
-        let result = tokio::time::timeout(Duration::from_secs(5), async {
+        let result: Result<()> = async {
             while let Some(result) = tasks.join_next().await {
                 result??;
             }
-            Ok::<_, anyhow::Error>(())
-        })
-        .await;
-        if let Err(error) = result
-            .context("TV 절전 요청 시간이 초과되었어요.")
-            .and_then(|r| r)
-        {
-            if read(state).map_err(anyhow::Error::msg)?.automatic {
-                start_watcher(state, app, None).await?;
-            }
-            return Err(error);
+            Ok(())
         }
+        .await;
+        if read(state).map_err(anyhow::Error::msg)?.automatic {
+            start_watcher(state, app, None).await?;
+        }
+        result?;
     }
-    let suspended = tokio::task::spawn_blocking(suspend_pc).await?;
-    if !state.service_mode && read(state).map_err(anyhow::Error::msg)?.automatic {
-        start_watcher(state, app, None).await?;
-    }
-    suspended?;
     Ok(())
 }
 
 fn suspend_pc() -> Result<()> {
+    with_sleep_privilege(|| {
+        if !unsafe { windows_sys::Win32::System::Power::SetSuspendState(false, false, false) } {
+            return Err(std::io::Error::last_os_error())
+                .context("PC를 절전 상태로 전환하지 못했어요.");
+        }
+        Ok(())
+    })
+}
+
+fn with_sleep_privilege(action: impl FnOnce() -> Result<()>) -> Result<()> {
     use windows_sys::Win32::{
         Foundation::{CloseHandle, GetLastError, HANDLE, SetLastError},
         Security::{
@@ -455,7 +554,7 @@ fn suspend_pc() -> Result<()> {
             SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
         },
         System::{
-            Power::SetSuspendState,
+            Power::IsPwrSuspendAllowed,
             Threading::{GetCurrentProcess, OpenProcessToken},
         },
     };
@@ -484,6 +583,7 @@ fn suspend_pc() -> Result<()> {
         }
     }
     unsafe {
+        anyhow::ensure!(IsPwrSuspendAllowed(), "이 PC에서 절전을 사용할 수 없어요.");
         let mut handle = std::ptr::null_mut();
         if OpenProcessToken(
             GetCurrentProcess(),
@@ -511,13 +611,16 @@ fn suspend_pc() -> Result<()> {
             }],
         };
         SetLastError(0);
+        // ReturnLength is required whenever PreviousState is supplied. A null
+        // pointer fails with ERROR_NOACCESS (998) before SetSuspendState runs.
+        let mut returned = 0;
         if AdjustTokenPrivileges(
             token.handle,
             0,
             &desired,
             std::mem::size_of::<TOKEN_PRIVILEGES>() as u32,
             &mut token.previous,
-            std::ptr::null_mut(),
+            &mut returned,
         ) == 0
         {
             return Err(std::io::Error::last_os_error())
@@ -529,10 +632,7 @@ fn suspend_pc() -> Result<()> {
             return Err(std::io::Error::from_raw_os_error(error as i32))
                 .context("현재 계정에 절전 권한이 없어요.");
         }
-        if !SetSuspendState(false, false, false) {
-            return Err(std::io::Error::last_os_error())
-                .context("PC를 절전 상태로 전환하지 못했어요.");
-        }
+        action()?;
     }
     Ok(())
 }
@@ -598,6 +698,47 @@ mod device_tests {
         }
     }
     #[test]
+    fn saved_discovery_matches_identity_after_ip_change_and_manual_ip() {
+        let identity = ltac::discovery::DeviceIdentity {
+            id: "uuid:TV-1".into(),
+            name: "[LG] webOS TV OLED42C4ENA".into(),
+            model: "LG Smart TV".into(),
+        };
+        let device = Device {
+            identity: identity.clone(),
+            ip: "192.0.2.2".parse().unwrap(),
+            broadcast: "192.0.2.255".parse().unwrap(),
+        };
+        let mut saved = config(1);
+        saved.device = Some(ltac::discovery::DeviceIdentity {
+            id: "uuid:tv-1".into(),
+            ..identity
+        });
+        assert!(already_saved(&device, &[saved.clone()]));
+        saved.device = None;
+        assert!(!already_saved(&device, &[saved.clone()]));
+        saved.ip = device.ip;
+        assert!(already_saved(&device, &[saved]));
+    }
+
+    #[test]
+    fn existing_saved_names_are_shortened_without_repairing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let mut saved = config(1);
+        saved.device = Some(ltac::discovery::DeviceIdentity {
+            id: "uuid:tv-1".into(),
+            name: "[LG] webOS TV OLED42C4ENA".into(),
+            model: "LG Smart TV".into(),
+        });
+        remember(&path, &saved).unwrap();
+        assert_eq!(devices(&path).unwrap()[0].name, "OLED42C4ENA");
+        assert_eq!(
+            configs(&path).unwrap()[0].device.as_ref().unwrap().name,
+            "[LG] webOS TV OLED42C4ENA"
+        );
+    }
+    #[test]
     fn discovery_of_a_manually_added_tv_updates_the_existing_row() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
@@ -629,5 +770,126 @@ mod device_tests {
         assert!(remember(&path, &config(17)).is_err());
         remember(&path, &config(1)).unwrap();
         assert_eq!(devices(&path).unwrap().len(), 16);
+    }
+}
+
+#[cfg(test)]
+mod sleep_tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[test]
+    fn first_run_and_legacy_preferences_default_to_sync_on() {
+        assert!(Preferences::default().automatic);
+        assert!(serde_json::from_str::<Preferences>("{}").unwrap().automatic);
+        assert!(
+            !serde_json::from_str::<Preferences>(r#"{"automatic":false}"#)
+                .unwrap()
+                .automatic
+        );
+    }
+
+    #[test]
+    fn native_sleep_preflight_enables_privilege_without_suspending_pc() {
+        // Hosted Windows VMs may not expose standby. In that environment,
+        // verify preflight refuses the operation before it reaches the action.
+        if !unsafe { windows_sys::Win32::System::Power::IsPwrSuspendAllowed() } {
+            assert!(with_sleep_privilege(|| panic!("Unsupported sleep must be rejected")).is_err());
+            return;
+        }
+        with_sleep_privilege(|| {
+            use windows_sys::Win32::{
+                Foundation::CloseHandle,
+                Security::{
+                    LUID_AND_ATTRIBUTES, LookupPrivilegeValueW, PRIVILEGE_SET, PrivilegeCheck,
+                    SE_PRIVILEGE_ENABLED, TOKEN_QUERY,
+                },
+                System::Threading::{GetCurrentProcess, OpenProcessToken},
+            };
+            unsafe {
+                let mut token = std::ptr::null_mut();
+                assert_ne!(
+                    OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token),
+                    0
+                );
+                let mut luid = std::mem::zeroed();
+                let name: Vec<u16> = "SeShutdownPrivilege\0".encode_utf16().collect();
+                assert_ne!(
+                    LookupPrivilegeValueW(std::ptr::null(), name.as_ptr(), &mut luid),
+                    0
+                );
+                let mut privileges = PRIVILEGE_SET {
+                    PrivilegeCount: 1,
+                    Control: 1, // PRIVILEGE_SET_ALL_NECESSARY
+                    Privilege: [LUID_AND_ATTRIBUTES {
+                        Luid: luid,
+                        Attributes: SE_PRIVILEGE_ENABLED,
+                    }],
+                };
+                let mut enabled = 0;
+                let checked = PrivilegeCheck(token, &mut privileges, &mut enabled);
+                CloseHandle(token);
+                assert_ne!(checked, 0);
+                assert_ne!(enabled, 0);
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejected_pc_sleep_restores_tv_and_reports_original_error() {
+        let calls = RefCell::new(Vec::new());
+        let error = sleep_with_recovery(
+            async {
+                calls.borrow_mut().push("off");
+                Ok(())
+            },
+            async {
+                calls.borrow_mut().push("sleep");
+                anyhow::bail!("sleep rejected")
+            },
+            async {
+                calls.borrow_mut().push("restore");
+                Ok(())
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(*calls.borrow(), ["off", "sleep", "restore"]);
+        assert!(error.to_string().contains("sleep rejected"));
+    }
+
+    #[tokio::test]
+    async fn partial_tv_failure_restores_devices_and_does_not_suspend_pc() {
+        let calls = RefCell::new(Vec::new());
+        assert!(
+            sleep_with_recovery(
+                async {
+                    calls.borrow_mut().push("off");
+                    anyhow::bail!("partial OFF")
+                },
+                async {
+                    calls.borrow_mut().push("sleep");
+                    Ok(())
+                },
+                async {
+                    calls.borrow_mut().push("restore");
+                    Ok(())
+                },
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(*calls.borrow(), ["off", "restore"]);
+    }
+
+    #[tokio::test]
+    async fn successful_sleep_waits_for_interactive_resume_to_restore_tv() {
+        sleep_with_recovery(async { Ok(()) }, async { Ok(()) }, async {
+            panic!("maintenance wake must not wake TV")
+        })
+        .await
+        .unwrap();
     }
 }

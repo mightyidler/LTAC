@@ -1,6 +1,6 @@
 [package]
 name = "ltac"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Minimal LG webOS TV power control for Windows"
 rust-version = "1.89"

@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import { cleanSegment, validMacSegments, shortcutFromEvent, shortcutLabel } from '../ui/src/input.ts';
+import { initialState } from '../ui/src/model.ts';
+
+assert.equal(cleanSegment('mac', 'a1:b2-zZ!한글'), 'A1B2ZZ');
+assert.equal(cleanSegment('ip', '19a2.한글'), '192');
+assert.equal(validMacSegments(['', '', '', '', '', '']), true);
+assert.equal(validMacSegments(['AA', 'B1', '00', 'FF', '12', '34']), true);
+assert.equal(validMacSegments(['AA', '', '00', 'FF', '12', '34']), false);
+assert.equal(validMacSegments(['GG', '12', '00', 'FF', '12', '34']), false);
+const event = { key: 'k', code: 'KeyK', ctrlKey: true, altKey: true, shiftKey: false, metaKey: false };
+assert.equal(shortcutFromEvent(event), 'Ctrl+Alt+K');
+assert.equal(shortcutFromEvent({ ...event, key: 'Shift', code: 'ShiftLeft' }), null);
+assert.equal(shortcutFromEvent({ ...event, key: 'F12', code: 'F12', shiftKey: true }), 'Ctrl+Alt+Shift+F12');
+assert.equal(shortcutFromEvent({ ...event, ctrlKey: false, altKey: false }), 'K');
+assert.equal(shortcutFromEvent({ ...event, ctrlKey: false, altKey: false, shiftKey: true }), 'Shift+K');
+assert.equal(shortcutFromEvent({ ...event, key: ';', code: 'Semicolon' }), 'Ctrl+Alt+Semicolon');
+assert.equal(shortcutFromEvent({ ...event, key: '+', code: 'NumpadAdd' }), 'Ctrl+Alt+NumpadAdd');
+assert.equal(shortcutFromEvent({ ...event, key: '1', code: 'Numpad1' }), 'Ctrl+Alt+Numpad1');
+assert.throws(() => shortcutFromEvent({ ...event, key: 'Unidentified', code: '' }), /다른 키/);
+assert.equal(shortcutLabel('Ctrl+Alt+Semicolon'), 'Ctrl + Alt + ;');
+assert.equal(initialState.automatic, true);
+console.log('Input normalization, hexadecimal validation, and supported shortcut combinations passed.');

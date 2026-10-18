@@ -1,0 +1,25 @@
+{
+  "name": "ltac",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "desktop": "tauri dev",
+    "desktop:build": "tauri build --no-bundle",
+    "desktop:release": "npm run core:release && tauri build --bundles nsis",
+    "core:release": "cargo build --release --locked --bins",
+    "test": "node tools/check-ui-inputs.mjs && node tools/check-app-update.mjs && node tools/check-page-motion.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/three": "^0.186.0",
+    "typescript": "^7",
+    "vite": "^8"
+  }
+}

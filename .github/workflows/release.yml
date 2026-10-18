@@ -1,0 +1,93 @@
+name: Release LTAC
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ltac-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - run: npm ci
+      - name: Verify matching versions and tag
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_TYPE -ne 'tag' -or $env:GITHUB_REF_NAME -ne "v$version") { throw 'Run this workflow against the matching version tag.' }
+          node tools/check-release.mjs
+      - run: cargo fmt --all -- --check
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: npm run core:release
+      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --all-targets
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
+      - run: npm test
+      - name: Build and sign installer including power service
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'LTAC ${{ github.ref_name }}'
+          releaseBody: |
+            LG webOS TV power control for Windows x64.
+            Includes the desktop app, CLI, and automatic boot/preshutdown power service.
+            Signed in-app updates use main/update.json, as in Bald.
+            Actual TV power, sleep, reboot and shutdown tests were excluded at the user's request. See docs/VALIDATION.md.
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: false
+          args: --bundles nsis
+      - name: Verify packaged resources and generate manifest
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (-not $installer) { throw 'Installer missing' }
+          node tools/check-release.mjs --package
+          node tools/verify-update.mjs $installer.FullName
+          node tools/publish-update.mjs $installer.FullName
+      - name: Publish verified release
+        run: gh release edit "$env:GITHUB_REF_NAME" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish update manifest on main
+        shell: bash
+        run: |
+          cp update.json "$RUNNER_TEMP/ltac-update.json"
+          git fetch origin main
+          git checkout -B main origin/main
+          cp "$RUNNER_TEMP/ltac-update.json" update.json
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add update.json
+          git diff --staged --quiet || git commit -m "chore: publish update manifest for ${{ github.ref_name }}"
+          git push origin HEAD:main

@@ -74,6 +74,12 @@ try {
     }
     await page.waitForSelector('#connection-indicator[data-state="success"]');
     assert.equal(await page.locator('#app').getAttribute('data-view'), 'connection');
+    // Let the result title's resize finish before comparing screen pixels.
+    await page.waitForTimeout(400);
+    const ribbonBefore = await page.locator('#connection-indicator canvas').screenshot();
+    await page.waitForTimeout(45);
+    const ribbonAfter = await page.locator('#connection-indicator canvas').screenshot();
+    assert(ribbonAfter.equals(ribbonBefore), 'The completed O must remain still');
     await page.waitForFunction(() => document.querySelector('#connection-title')?.textContent === '연결 완료');
     await page.waitForSelector('#app[data-view="home"]', {timeout:10000});
     await page.waitForFunction(() => document.querySelector('.t-page[data-view="home"]')?.inert === false);

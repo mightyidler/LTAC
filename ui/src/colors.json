@@ -1,0 +1,466 @@
+{
+  "sourceSha256": "88607b0289330e96bdfd677eff833ade348f188dd142fc1a1b3013068482dd75",
+  "roles": {
+    "--bg-canvas": {
+      "dark": {
+        "value": "#1d1d1d",
+        "source": "LTAC-Dark/Component/props/x_fill"
+      },
+      "light": {
+        "value": "#f6f6f6",
+        "source": "LTAC-Light/Component/props/x_fill"
+      }
+    },
+    "--bg-raised": {
+      "dark": {
+        "value": "#2f2f2f",
+        "source": "LTAC-Dark/Component2/props/remove_folder_button_container_fill"
+      },
+      "light": {
+        "value": "#eeeeee",
+        "source": "LTAC-Light/Component2/props/remove_folder_button_container_fill"
+      }
+    },
+    "--bg-overlay": {
+      "dark": {
+        "value": "#2f2f2f99",
+        "source": "LTAC-Dark/Component3/props/frame_97_fill"
+      },
+      "light": {
+        "value": "#ffffff99",
+        "source": "LTAC-Light/Component3/props/frame_97_fill"
+      }
+    },
+    "--bg-header": {
+      "dark": {
+        "value": "#1d1d1db2",
+        "source": "LTAC-Dark/Component/props/header_icons_fill"
+      },
+      "light": {
+        "value": "#f6f6f6b2",
+        "source": "LTAC-Light/Component/props/header_icons_fill"
+      }
+    },
+    "--bg-scrim": {
+      "dark": {
+        "value": "#1d1d1dcc",
+        "source": "LTAC-Dark/Component/props/frame_9_fill"
+      },
+      "light": {
+        "value": "#f6f6f6cc",
+        "source": "LTAC-Light/Component/props/frame_9_fill"
+      }
+    },
+    "--text-primary": {
+      "dark": {
+        "value": "#ffffff",
+        "source": "LTAC-Dark/Component2/props/monitor_folder_label_color"
+      },
+      "light": {
+        "value": "#000000",
+        "source": "LTAC-Light/Component2/props/monitor_folder_label_color"
+      }
+    },
+    "--text-secondary": {
+      "dark": {
+        "value": "#ffffff99",
+        "source": "LTAC-Dark/Component2/props/monitor_folder_description_color"
+      },
+      "light": {
+        "value": "#00000070",
+        "source": "LTAC-Light/Component2/props/monitor_folder_description_color"
+      }
+    },
+    "--text-label": {
+      "dark": {
+        "value": "#ffffffb2",
+        "source": "LTAC-Dark/Component2/props/x_color"
+      },
+      "light": {
+        "value": "#00000080",
+        "source": "LTAC-Light/Component2/props/x_color"
+      }
+    },
+    "--text-field-label": {
+      "dark": {
+        "value": "#ffffffb2",
+        "source": "LTAC-Dark/Component7/props/ip_color"
+      },
+      "light": {
+        "value": "#000000b2",
+        "source": "LTAC-Light/Component7/props/ip_color"
+      }
+    },
+    "--text-header": {
+      "dark": {
+        "value": "#ffffff99",
+        "source": "LTAC-Dark/Component/props/header_color"
+      },
+      "light": {
+        "value": "#00000080",
+        "source": "LTAC-Light/Component/props/header_color"
+      }
+    },
+    "--text-control": {
+      "dark": {
+        "value": "#ffffff99",
+        "source": "LTAC-Dark/Component2/props/display_language_label_color"
+      },
+      "light": {
+        "value": "#00000099",
+        "source": "LTAC-Light/Component2/props/display_language_label_color"
+      }
+    },
+    "--text-muted": {
+      "dark": {
+        "value": "#ffffffb2",
+        "source": "LTAC-Dark/Component5/props/frame_10_frame_12_x_color"
+      },
+      "light": {
+        "value": "#00000070",
+        "source": "LTAC-Light/Component5/props/frame_10_frame_12_x_color"
+      }
+    },
+    "--text-placeholder": {
+      "dark": {
+        "value": "#ffffff66",
+        "source": "LTAC-Dark/Component7/props/00_color"
+      },
+      "light": {
+        "value": "#00000052",
+        "source": "LTAC-Light/Component7/props/00_color"
+      }
+    },
+    "--text-notice": {
+      "dark": {
+        "value": "#ffffff70",
+        "source": "LTAC-Dark/홈(설정)/Frame/props/frame_6_x_color"
+      },
+      "light": {
+        "value": "#00000052",
+        "source": "LTAC-Light/홈(설정)/Frame/props/frame_6_x_color"
+      }
+    },
+    "--text-emphasis": {
+      "dark": {
+        "value": "#ffffff",
+        "source": "LTAC-Dark/Component5/props/frame_12_x_color"
+      },
+      "light": {
+        "value": "#000000",
+        "source": "LTAC-Light/Component5/props/frame_12_x_color"
+      }
+    },
+    "--text-inverse": {
+      "dark": {
+        "value": "#1d1d1d",
+        "source": "LTAC-Dark/Component/props/frame_9_x_color"
+      },
+      "light": {
+        "value": "#f6f6f6",
+        "source": "LTAC-Light/Component/props/frame_9_x_color"
+      }
+    },
+    "--icon-secondary": {
+      "dark": {
+        "value": "#ffffff99",
+        "source": "LTAC-Dark/Component/props/vector_fill"
+      },
+      "light": {
+        "value": "#00000099",
+        "source": "LTAC-Light/Component/props/vector_fill"
+      }
+    },
+    "--border-subtle": {
+      "dark": {
+        "value": "#ffffff0a",
+        "source": "LTAC-Dark/Component2/props/divider_fill"
+      },
+      "light": {
+        "value": "#0000000a",
+        "source": "LTAC-Light/Component2/props/divider_fill"
+      }
+    },
+    "--surface-subtle": {
+      "dark": {
+        "value": "#ffffff0a",
+        "source": "LTAC-Dark/Component2/props/frame_33_fill"
+      },
+      "light": {
+        "value": "#0000000a",
+        "source": "LTAC-Light/Component2/props/frame_33_fill"
+      }
+    },
+    "--surface-control": {
+      "dark": {
+        "value": "#ffffff14",
+        "source": "LTAC-Dark/Component/props/icon_container_fill"
+      },
+      "light": {
+        "value": "#0000000f",
+        "source": "LTAC-Light/Component/props/icon_container_fill"
+      }
+    },
+    "--interaction-disabled": {
+      "dark": {
+        "value": "#ffffff33",
+        "source": "LTAC-Dark/Component/props/frame_9_frame_9_fill"
+      },
+      "light": {
+        "value": "#00000033",
+        "source": "LTAC-Light/Component/props/frame_9_frame_9_fill"
+      }
+    },
+    "--interaction-primary": {
+      "dark": {
+        "value": "#ffffff",
+        "source": "LTAC-Dark/Component4/props/frame_8_fill"
+      },
+      "light": {
+        "value": "#000000",
+        "source": "LTAC-Light/Component4/props/frame_8_fill"
+      }
+    },
+    "--separator-color": {
+      "dark": {
+        "value": "#ffffff52",
+        "source": "LTAC-Dark/Component7/props/ellipse_12_fill"
+      },
+      "light": {
+        "value": "#00000052",
+        "source": "LTAC-Light/Component7/props/ellipse_12_fill"
+      }
+    },
+    "--input-bg": {
+      "dark": {
+        "value": "#ffffff0a",
+        "source": "LTAC-Dark/Component7/props/frame_18_fill"
+      },
+      "light": {
+        "value": "#00000005",
+        "source": "LTAC-Light/Component7/props/frame_18_fill"
+      }
+    },
+    "--input-border": {
+      "dark": {
+        "value": "#ffffff0a",
+        "source": "LTAC-Dark/Component7/props/frame_18_stroke"
+      },
+      "light": {
+        "value": "#0000000a",
+        "source": "LTAC-Light/Component7/props/frame_18_stroke"
+      }
+    },
+    "--input-border-focus": {
+      "dark": {
+        "value": "#ffffff",
+        "source": "LTAC-Dark/Component7/props/frame_27_stroke"
+      },
+      "light": {
+        "value": "#000000",
+        "source": "LTAC-Light/Component7/props/frame_27_stroke"
+      }
+    },
+    "--shortcut-bg": {
+      "dark": {
+        "value": "#ffffff0a",
+        "source": "LTAC-Dark/Component2/props/frame_88_fill"
+      },
+      "light": {
+        "value": "#00000008",
+        "source": "LTAC-Light/Component2/props/frame_88_fill"
+      }
+    },
+    "--border-window": {
+      "dark": {
+        "value": "#383838",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#e5e5e5",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--border-overlay": {
+      "dark": {
+        "value": "#ffffff1a",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#0000001a",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--surface-thumb": {
+      "dark": {
+        "value": "#ffffff",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#ffffff",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--interaction-hover": {
+      "dark": {
+        "value": "#ffffff1f",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#0000000f",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--interaction-hover-subtle": {
+      "dark": {
+        "value": "#ffffff08",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#0000000a",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--interaction-active": {
+      "dark": {
+        "value": "#ffffff29",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#00000014",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--interaction-primary-hover": {
+      "dark": {
+        "value": "#e5e5e5",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#383838",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--status-success": {
+      "dark": {
+        "value": "#31d158",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#34c759",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--status-error": {
+      "dark": {
+        "value": "#ff4245",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#ff383c",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--status-accent": {
+      "dark": {
+        "value": "#ff375f",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#ff375f",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--caret-color": {
+      "dark": {
+        "value": "#d9d9d9",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#000000",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--scrollbar": {
+      "dark": {
+        "value": "#ffffff25",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#00000025",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--scrollbar-hover": {
+      "dark": {
+        "value": "#ffffff40",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#00000040",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--shadow-subtle": {
+      "dark": {
+        "value": "#00000014",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#00000014",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--shadow-menu": {
+      "dark": {
+        "value": "#00000014",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#0000000a",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--shadow-raised": {
+      "dark": {
+        "value": "#00000033",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#00000033",
+        "source": "explicit user change / existing interaction token"
+      }
+    },
+    "--text-on-primary-muted": {
+      "dark": {
+        "value": "#1d1d1da6",
+        "source": "explicit user change / existing interaction token"
+      },
+      "light": {
+        "value": "#f6f6f6a6",
+        "source": "explicit user change / existing interaction token"
+      }
+    }
+  },
+  "aliases": {
+    "--window-bg": "--bg-canvas",
+    "--window-border": "--border-window",
+    "--button-bg": "--surface-control",
+    "--button-primary-bg": "--interaction-primary",
+    "--button-primary-text": "--text-inverse",
+    "--input-placeholder": "--text-placeholder",
+    "--toggle-off": "--interaction-disabled",
+    "--toggle-on": "--status-success",
+    "--toggle-thumb": "--surface-thumb",
+    "--menu-bg": "--bg-raised",
+    "--menu-overlay": "--bg-overlay",
+    "--indicator-color": "--text-primary",
+    "--indicator-error": "--status-error",
+    "--toast-bg": "--bg-overlay",
+    "--toast-text": "--text-primary",
+    "--toast-border": "--border-subtle",
+    "--text-preference-value": "--text-label",
+    "--text-version": "--text-control",
+    "--p-preview-light": "--p-gray-150"
+  }
+}

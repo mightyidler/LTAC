@@ -10,7 +10,7 @@ button, input { outline: none; }
 #app, #app * { -webkit-user-select: none; user-select: none; }
 #app input { -webkit-user-select: text; user-select: text; }
 #app ::selection { background: transparent; color: inherit; }
-#app :focus-visible { outline: 2px solid var(--interaction-focus); outline-offset: 2px; }
+#app :focus-visible { outline: none; }
 button:disabled { cursor: default; }
 button { transform-origin: center; transition: background-color var(--duration-quick) var(--ease-smooth-out), opacity var(--duration-quick) var(--ease-smooth-out), scale var(--duration-quick) var(--ease-smooth-out); }
 button:active:not(:disabled) { scale: .98; }
@@ -19,21 +19,27 @@ p, h1, h2 { margin: 0; }
 svg { display: block; flex-shrink: 0; }
 [hidden] { display: none !important; }
 #app { width: calc(var(--app-width) + 8px); height: calc(var(--app-height) + 8px); padding: 4px; }
-.app-window { width: var(--app-width); height: var(--app-height); position: relative; background: var(--window-bg); border-radius: 12px; overflow: hidden; isolation: isolate; }
-.app-window::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--window-border); pointer-events: none; z-index: 100; }
-.window-controls { position: absolute; inset: 1px 1px auto; height: 52px; padding: 11px; display: flex; align-items: center; z-index: 10; background: var(--bg-header); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); user-select: none; }
+/* The real border owns the outer curve. Everything painted inside it, including
+   backdrop filters, is clipped by a separate, stationary inner surface. */
+.app-window { --window-radius: 12px; --window-stroke: 1px; --window-inner-radius: calc(var(--window-radius) - var(--window-stroke)); width: var(--app-width); height: var(--app-height); position: relative; background: transparent; border: var(--window-stroke) solid var(--window-border); border-radius: var(--window-radius); overflow: hidden; isolation: isolate; }
+.app-surface { position: absolute; inset: 0; border-radius: var(--window-inner-radius); background: var(--window-bg); overflow: hidden; isolation: isolate; }
+.window-controls { position: absolute; inset: 0 0 auto; height: 52px; padding: 11px; display: flex; align-items: center; z-index: 10; background: var(--bg-header); border-radius: var(--window-inner-radius) var(--window-inner-radius) 0 0; -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); user-select: none; }
 .window-actions { display: flex; gap: 12px; margin-left: auto; }
-.window-button { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border-radius: 14px; background: var(--surface-control); color: var(--text-secondary); }
+.window-button { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border-radius: 14px; background: var(--surface-control); color: var(--icon-secondary); }
 .window-button > svg { width: 16px; height: 16px; }
 #navigation { --navigation-morph-dur: var(--duration-medium); }
 #compact-title { --header-title-out-dur: 200ms; position: absolute; left: 11px; font-size: 16px; line-height: 24px; opacity: 0; pointer-events: none; }
 #compact-title.visible { opacity: 1; }
 .scrolled .window-controls { background: var(--bg-scrim); box-shadow: inset 0 -1px 0 var(--border-subtle); -webkit-backdrop-filter: blur(40px); backdrop-filter: blur(40px); }
-#pages { --page-navigation-dur: 350ms; --page-navigation-ease: cubic-bezier(.32, .72, 0, 1); --page-replace-dur: 250ms; position: absolute; inset: 1px; }
+#pages { --page-navigation-dur: 350ms; --page-navigation-ease: cubic-bezier(.32, .72, 0, 1); --page-replace-dur: 250ms; position: absolute; inset: 0; z-index: 0; border-radius: inherit; overflow: hidden; }
 .t-page { display: flex; flex-direction: column; }
-#pages > .t-page { background: var(--bg-canvas); transition: none; filter: none; transform: none; will-change: auto; }
+/* Opaque pages occlude the content underneath during push/pop. The window
+   canvas, border and rounded clip stay on the stationary surface/viewport;
+   pages have no moving rounded corners that could expose the previous page. */
+#pages > .t-page { background: var(--bg-canvas); border-radius: 0; transition: none; filter: none; transform: none; will-change: auto; }
 .page-scroll { min-height: 0; overflow-y: auto; overflow-x: hidden; overflow-anchor: none; flex: 1; padding: 60px 15px 16px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
-.choice-scroll { padding: 60px 7px 80px; }
+.t-page[data-view="choose"] { --choice-footer-height: 68px; --choice-footer-gap: 12px; timeline-scope: --choice-scroll; }
+.choice-scroll { padding: 60px 7px calc(var(--choice-footer-height) + var(--choice-footer-gap)); scroll-timeline: --choice-scroll block; }
 .choice-scroll .page-heading { padding-inline: 8px; }
 .discovery-state { --panel-translate-y: 0px; --panel-close-dur: 150ms; position: relative; min-height: calc(var(--app-height) - 210px); overflow: hidden; }
 .discovery-panel { position: absolute; inset: 0 0 auto; }
@@ -50,7 +56,7 @@ svg { display: block; flex-shrink: 0; }
   .home-scroll::-webkit-scrollbar-track { margin-block: 52px 8px; }
 }
 .page-heading { margin-bottom: 16px; display: flex; flex-direction: column; gap: 2px; }
-.page-heading p { color: var(--text-secondary); font-size: 15px; line-height: 20px; }
+.page-heading p { color: var(--text-header); font-size: 15px; line-height: 20px; }
 .page-heading h1 { font-size: 20px; line-height: 28px; }
 .device-choice { width: 100%; padding: 12px 8px; display: flex; align-items: center; gap: 8px; border-radius: 8px; background: transparent; text-align: left; position: relative; font-size: 16px; line-height: 24px; }
 .device-choice:hover:not(:disabled) { background: var(--interaction-hover-subtle); }
@@ -61,13 +67,17 @@ svg { display: block; flex-shrink: 0; }
 .selection-check { margin-left: auto; opacity: 0; scale: .8; transition: opacity var(--duration-fast) var(--ease-in-out), scale var(--duration-fast) var(--ease-smooth-out); }
 .device-choice[aria-selected="true"] .selection-check { opacity: 1; scale: 1; }
 .page-footer { position: absolute; bottom: 0; left: 0; right: 0; display: flex; gap: 8px; padding: 16px 15px; background: transparent; z-index: 4; }
-.page-footer::before { content: ''; position: absolute; inset: 0; z-index: -1; background: var(--bg-scrim); -webkit-backdrop-filter: blur(40px); backdrop-filter: blur(40px); pointer-events: none; }
-.scrolled .page-footer::before { box-shadow: inset 0 1px 0 var(--border-subtle); }
+.page-footer::before { content: ''; position: absolute; inset: 0; z-index: -1; background: var(--bg-scrim); border-radius: 0 0 var(--window-inner-radius) var(--window-inner-radius); -webkit-backdrop-filter: blur(40px); backdrop-filter: blur(40px); pointer-events: none; }
+/* The last row clears the footer before the final bottom gap is scrolled.
+   An inactive timeline (a short list) keeps the divider hidden. */
+.choice-scroll + .page-footer { min-height: var(--choice-footer-height); }
+.choice-scroll + .page-footer::after { content: ''; position: absolute; inset: 0 0 auto; height: 1px; background: var(--border-subtle); pointer-events: none; opacity: 0; animation: choice-footer-divider 1ms steps(1, end) both; animation-timeline: --choice-scroll; animation-range: 0px max(0px, calc(100% - var(--choice-footer-gap))); }
+@keyframes choice-footer-divider { from { opacity: 1; } to { opacity: 0; } }
 .action { display: flex; align-items: center; justify-content: center; min-width: 0; flex: 1; padding: 8px; border-radius: 8px; background: var(--button-bg); font-size: 15px; line-height: 20px; }
 .action.primary { background: var(--button-primary-bg); color: var(--button-primary-text); }
 .action.primary:hover:not(:disabled) { background: var(--interaction-primary-hover); }
-.action.primary:disabled { background: var(--interaction-disabled); color: var(--text-secondary); }
-.action.refresh { width: 36px; height: 36px; flex: 0 0 36px; color: var(--text-secondary); }
+.action.primary:disabled { background: var(--interaction-disabled); color: var(--button-primary-text); }
+.action.refresh { width: 36px; height: 36px; flex: 0 0 36px; color: var(--icon-secondary); }
 .refresh svg { width: 20px; height: 20px; }
 /* Scale the complete icon button around its center, including the glyph. */
 .window-button:active:not(:disabled), .action.refresh:active:not(:disabled) { scale: .9; }
@@ -88,12 +98,12 @@ svg { display: block; flex-shrink: 0; }
 @keyframes spin { to { rotate: 360deg; } }
 .form-page { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 .field-group { margin-bottom: 16px; }
-.field-group label { display: block; padding: 6px 0; font-size: 13px; line-height: 18px; color: var(--text-label); }
+.field-group label { display: block; padding: 6px 0; font-size: 13px; line-height: 18px; color: var(--text-field-label); }
 .segments { display: flex; gap: 4px; width: 100%; align-items: center; }
 .segment-cell { position: relative; flex: 1; min-width: 0; }
 .segments input { width: 100%; min-width: 0; height: 34px; padding: 7px 8px; text-align: center; background: var(--input-bg); border: 0; box-shadow: inset 0 0 0 1px var(--input-border); border-radius: 8px; color: var(--text-primary); font-size: 15px; line-height: 20px; caret-color: var(--caret-color); transition: box-shadow var(--duration-quick) var(--ease-out); }
 .segments input::placeholder { color: var(--input-placeholder); opacity: 1; }
-.segments input:focus { box-shadow: inset 0 0 0 1px var(--border-input-focus); }
+.segments input:focus { box-shadow: inset 0 0 0 1px var(--input-border-focus); }
 .segments input:focus:placeholder-shown { caret-color: transparent; }
 .segments input:focus:placeholder-shown::placeholder { color: transparent; }
 .empty-caret { position: absolute; top: 7px; left: 50%; transform: translateX(-50%); color: var(--input-placeholder); font-size: 15px; line-height: 20px; pointer-events: none; visibility: hidden; }
@@ -131,7 +141,7 @@ svg { display: block; flex-shrink: 0; }
 .home-devices-empty p { padding: 16px 0; color: var(--text-notice); font-size: 13px; line-height: 18px; text-align: center; }
 .saved-device { position: relative; display: flex; gap: 12px; align-items: center; padding: 16px 0; }
 .saved-device:not(:last-child)::after { content: ''; position: absolute; height: 1px; bottom: 0; right: 0; left: 52px; background: var(--surface-subtle); }
-.tv-tile { display: grid; place-items: center; flex: 0 0 40px; width: 40px; height: 40px; padding: 0; background: var(--surface-subtle); border-radius: 12px; color: var(--text-secondary); }
+.tv-tile { display: grid; place-items: center; flex: 0 0 40px; width: 40px; height: 40px; padding: 0; background: var(--surface-subtle); border-radius: 12px; color: var(--icon-secondary); }
 .device-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .device-info p { font-size: 15px; line-height: 20px; overflow-wrap: anywhere; }
 .device-info small { font-size: 12px; line-height: 16px; color: var(--text-secondary); }
@@ -140,6 +150,7 @@ svg { display: block; flex-shrink: 0; }
 .setting-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .setting-copy p, .shortcut-setting p { font-size: 15px; line-height: 20px; }
 .setting-copy small { font-size: 12px; line-height: 16px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.about-section .setting-copy small { color: var(--text-version); }
 .divider { height: 1px; background: var(--surface-subtle); }
 .t-toggle { width: 64px; height: 28px; flex: 0 0 64px; border-radius: 16px; padding: 2px; background: var(--toggle-off); text-align: left; }
 .t-toggle[data-on="true"], .t-toggle[data-on="true"]:hover { background: var(--toggle-on); }
@@ -154,12 +165,12 @@ svg { display: block; flex-shrink: 0; }
 .shortcut-setting { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 16px 0 8px; transform: translateY(-4px); transition: transform var(--duration-quick) var(--ease-smooth-out); }
 .shortcut-setting > p { flex: 0 0 auto; }
 .shortcut-panel[data-open="true"] .shortcut-setting { transform: translateY(0); transition: transform var(--duration-fast) var(--ease-smooth-out) var(--duration-stagger); }
-.shortcut-button { --shortcut-copy-out-dur: 350ms; --shortcut-overlap-delay: 120ms; position: relative; grid-template-columns: minmax(0, 1fr); --text-swap-dur: var(--duration-fast); --shortcut-surface-dur: var(--duration-medium); --text-swap-translate-y: var(--distance-micro); --text-swap-blur: var(--blur-small); --text-swap-ease: var(--ease-in-out); display: grid; place-items: center; flex: 0 1 auto; min-width: 0; max-width: 220px; min-height: 28px; padding: 5px 9px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--border-subtle); background: var(--surface-subtle); color: var(--text-secondary); font-size: 13px; line-height: 18px; overflow: visible; transition: width var(--shortcut-surface-dur) var(--ease-smooth-out) var(--shortcut-resize-delay, 0ms), height var(--shortcut-surface-dur) var(--ease-smooth-out) var(--shortcut-resize-delay, 0ms), background-color var(--shortcut-surface-dur) var(--ease-smooth-out), box-shadow var(--shortcut-surface-dur) var(--ease-smooth-out), color var(--shortcut-surface-dur) var(--ease-smooth-out), scale var(--duration-quick) var(--ease-smooth-out); }
+.shortcut-button { --shortcut-copy-out-dur: 350ms; --shortcut-overlap-delay: 120ms; position: relative; grid-template-columns: minmax(0, 1fr); --text-swap-dur: var(--duration-fast); --shortcut-surface-dur: var(--duration-medium); --text-swap-translate-y: var(--distance-micro); --text-swap-blur: var(--blur-small); --text-swap-ease: var(--ease-in-out); display: grid; place-items: center; flex: 0 1 auto; min-width: 0; max-width: 220px; min-height: 28px; padding: 5px 9px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--border-subtle); background: var(--shortcut-bg); color: var(--text-control); font-size: 13px; line-height: 18px; overflow: visible; transition: width var(--shortcut-surface-dur) var(--ease-smooth-out) var(--shortcut-resize-delay, 0ms), height var(--shortcut-surface-dur) var(--ease-smooth-out) var(--shortcut-resize-delay, 0ms), background-color var(--shortcut-surface-dur) var(--ease-smooth-out), box-shadow var(--shortcut-surface-dur) var(--ease-smooth-out), color var(--shortcut-surface-dur) var(--ease-smooth-out), scale var(--duration-quick) var(--ease-smooth-out); }
 .shortcut-button > span { grid-area: 1 / 1; display: block; max-width: 100%; white-space: pre; overflow-wrap: anywhere; }
 .shortcut-button > .shortcut-copy-outgoing { grid-area: auto; position: absolute; left: 50%; top: 50%; translate: -50% -50%; pointer-events: none; }
 .shortcut-button > .t-text-swap.is-exit { transition-delay: 0ms; }
 .shortcut-button.capturing, .shortcut-button.capturing:hover { background: var(--button-primary-bg); box-shadow: inset 0 0 0 1px var(--button-primary-bg); color: var(--button-primary-text); }
-#check-update { --shimmer-base: color-mix(in srgb, var(--button-primary-text) 65%, transparent); --shimmer-highlight: var(--button-primary-text); }
+.shortcut-button { --shimmer-base: var(--text-on-primary-muted); --shimmer-highlight: var(--button-primary-text); }
 .more-anchor { width: 24px; height: 24px; position: relative; z-index: 5; }
 .more-anchor:has([data-open="true"]) { z-index: 8; }
 .device-menu { position: absolute; right: 0; top: 0; width: 24px; height: 24px; background: var(--menu-bg); box-shadow: inset 0 0 0 1px var(--border-subtle); }
@@ -170,7 +181,7 @@ svg { display: block; flex-shrink: 0; }
 .device-menu:has(.more-button:active):not([data-open="true"]) { scale: .9; }
 .device-menu[data-open="true"] { width: var(--menu-open-width, var(--menu-min-width)); height: 80px; background: var(--menu-overlay); box-shadow: inset 0 0 0 1px var(--border-subtle), 0 4px 8px var(--shadow-menu); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); }
 .device-menu[data-open="true"] { transition: width var(--morph-open-dur) var(--morph-ease), height var(--morph-open-dur) var(--morph-ease), border-radius var(--morph-open-dur) var(--morph-ease), scale var(--duration-quick) var(--ease-smooth-out); }
-.device-menu .t-morph-plus { display: grid; place-items: center; width: 24px; height: 24px; top: 0; bottom: auto; padding: 0; color: var(--text-secondary); }
+.device-menu .t-morph-plus { display: grid; place-items: center; width: 24px; height: 24px; top: 0; bottom: auto; padding: 0; color: var(--icon-secondary); }
 .device-menu .more-button:active:not(:disabled) { scale: 1; }
 .device-menu .t-morph-plus, .device-menu .t-morph-plus svg { transform-origin: center; }
 /* Cross-fade in place: a translated ellipsis looks off-center on menu close. */
@@ -195,12 +206,13 @@ button:disabled { color: var(--text-placeholder); }
 .preference-page { padding: 60px 7px 16px; }
 .preference-link { display: flex; align-items: center; gap: 0; margin: -4px 0; padding: 4px 0 4px 8px; text-align: left; background: transparent; border-radius: 8px; font-size: 15px; line-height: 20px; }
 .preference-row > .setting-copy { font-size: 15px; line-height: 20px; }
-.preference-value { color: var(--text-secondary); font-size: 15px; line-height: 20px; }
+.preference-value { color: var(--text-preference-value); font-size: 15px; line-height: 20px; }
 .preference-chevron { color: var(--text-placeholder); width: 20px; height: 20px; }
 .preference-option { width: 100%; display: flex; align-items: center; gap: 8px; padding: 12px 8px; border-radius: 8px; background: transparent; text-align: left; position: relative; font-size: 16px; line-height: 24px; }
 .preference-option:hover:not(:disabled) { background: var(--interaction-hover-subtle); }
 .preference-option > span:first-child { flex: 1; }
 .preference-option .selection-check { color: var(--text-primary); }
+.page-heading h1, #compact-title, .device-choice, .action:not(.primary), .connection-copy h1, .device-info p, .setting-copy p, .shortcut-setting p, .preference-row > .setting-copy, .preference-option { color: var(--text-primary); }
 .preference-option[aria-checked="true"] .selection-check { opacity: 1; scale: 1; }
 .preference-option:not(:last-child) { margin-bottom: 9px; }
 .preference-option:not(:last-child)::after { content: ''; position: absolute; bottom: -5px; left: 8px; right: 8px; height: 1px; background: var(--border-subtle); pointer-events: none; }

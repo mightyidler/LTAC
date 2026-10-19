@@ -20,6 +20,8 @@ import refresh from '../../Vectors/Refresh.svg?raw';
 import more from '../../Vectors/More Horizontal.svg?raw';
 import editIcon from '../../Vectors/Edit.svg?raw';
 import deleteIcon from '../../Vectors/Delete.svg?raw';
+import chevronRight from '../../Vectors/Chevron right.svg?raw';
+import checkIcon from '../../Vectors/Check.svg?raw';
 
 // Prepare preview styles and both text weights before the first visible screen.
 const previewModule = !desktop && import.meta.env.DEV ? await import('./preview') : null;
@@ -28,10 +30,10 @@ await Promise.all([document.fonts.load('300 15px Pretendard'), document.fonts.lo
 await initializePreferences();
 const app = document.querySelector<HTMLElement>('#app')!;
 const icon = (svg: string) => svg.replaceAll('"white"', '"currentColor"');
-const check = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m4 12 5 5L20 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const check = icon(checkIcon).replace('<svg ', '<svg aria-hidden="true" ');
 const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
-app.innerHTML = `<div class="app-window"><header class="window-controls"><button id="navigation" class="window-button" aria-label="${t("기기 추가")}" hidden></button><span id="compact-title">${t("연결할 장치를 선택하세요")}</span><div class="window-actions"><button id="minimize" class="window-button" aria-label="${t("최소화")}">${icon(minus)}</button><button id="close" class="window-button" aria-label="${t("닫기")}">${icon(close)}</button></div></header><div id="pages" class="t-page-slide" data-page="1"><section id="page-a" class="t-page" data-page-id="1"></section><section id="page-b" class="t-page" data-page-id="2" inert></section></div><div class="toast-placement"><div id="toast" class="app-toast t-toast" role="alert" aria-live="assertive" aria-atomic="true" aria-hidden="true" inert><span class="toast-message"></span></div></div></div>`;
+app.innerHTML = `<div class="app-window"><div class="app-surface"><header class="window-controls"><button id="navigation" class="window-button" aria-label="${t("기기 추가")}" hidden></button><span id="compact-title">${t("연결할 장치를 선택하세요")}</span><div class="window-actions"><button id="minimize" class="window-button" aria-label="${t("최소화")}">${icon(minus)}</button><button id="close" class="window-button" aria-label="${t("닫기")}">${icon(close)}</button></div></header><div id="pages" class="t-page-slide" data-page="1"><section id="page-a" class="t-page" data-page-id="1"></section><section id="page-b" class="t-page" data-page-id="2" inert></section></div><div class="toast-placement"><div id="toast" class="app-toast t-toast" role="alert" aria-live="assertive" aria-atomic="true" aria-hidden="true" inert><span class="toast-message"></span></div></div></div></div>`;
 const toast = new Toast(el('toast'));
 const navigation = new Navigation(el<HTMLButtonElement>('navigation'));
 const windowTitle = new WindowTitle(el('compact-title'));
@@ -274,7 +276,8 @@ function updateShortcutButton() {
   const button = el<HTMLButtonElement>('shortcut');
   button.setAttribute('aria-pressed', String(capture));
   button.setAttribute('aria-busy', String(shortcutSaving));
-  swapShortcutLabel(button, capture ? shortcutHint : state.shortcut ? shortcutLabel(state.shortcut) : t("단축키 지정"), capture, capture && shortcutHint === t("키를 눌러주세요"));
+  const waitingForShortcut = capture && shortcutHint === t("키를 눌러주세요");
+  swapShortcutLabel(button, capture ? shortcutHint : state.shortcut ? shortcutLabel(state.shortcut) : t("단축키 지정"), capture, waitingForShortcut, waitingForShortcut);
 }
 function updateUpdateButton() {
   const button = el<HTMLButtonElement>('check-update');
@@ -286,7 +289,7 @@ function updateUpdateButton() {
 }
 const languageNames: Record<Language, string> = { ko: '한국어', en: 'English', ja: '日本語' };
 const themeName = (value: Theme) => t(value === 'system' ? '시스템' : value === 'light' ? '라이트' : '다크');
-const chevron = '<svg class="preference-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const chevron = icon(chevronRight).replace('<svg ', '<svg class="preference-chevron" aria-hidden="true" ');
 function refreshWindowLabels() {
   app.setAttribute('aria-label', t('LG TV 전원 제어'));
   el('minimize').setAttribute('aria-label', t('최소화'));

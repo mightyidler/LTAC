@@ -19,7 +19,7 @@ export function pageTransitionMode(from: string, to: string, backward: boolean):
   if (backward) return 'pop';
   if (from === 'connection' && to === 'home') return 'complete';
   if ((from === 'choose' || from === 'manual') && to === 'connection') return 'push';
-  if ((from === 'home' && (to === 'choose' || to.startsWith('edit-'))) || (from === 'choose' && to === 'manual')) return 'push';
+  if ((from === 'home' && (to === 'choose' || to === 'language' || to === 'theme' || to.startsWith('edit-'))) || (from === 'choose' && to === 'manual')) return 'push';
   return 'replace';
 }
 
@@ -88,7 +88,12 @@ export async function swapText(node: HTMLElement, next: string, resize?: HTMLEle
   node.classList.remove('is-enter-start'); swaps.delete(node); pendingTexts.delete(node);
 }
 
-type ShortcutCopy = { text: string; active: boolean; emphasized: boolean };
+type ShortcutCopy = { text: string; active: boolean; emphasized: boolean; shimmer: boolean };
+function syncLabelShimmer(label: HTMLElement, enabled: boolean) {
+  label.classList.toggle('t-shimmer', enabled);
+  if (enabled) label.setAttribute('data-text', label.textContent ?? '');
+  else label.removeAttribute('data-text');
+}
 const shortcutSwaps = new WeakMap<HTMLButtonElement, { next: ShortcutCopy; running: boolean; version: number; cleanup?: () => void }>();
 // CSS layout sizes exclude the button's press scale and any page transform.
 const layoutSize = (node: HTMLElement) => {
@@ -111,27 +116,30 @@ function fitShortcutCopy(button: HTMLButtonElement, label: HTMLElement) {
 }
 // Text states swap with independently measured copies: resizing the button
 // never reflows either label, and the two text phases overlap without a gap.
-export function swapButtonLabel(button: HTMLButtonElement, text: string, active: boolean, emphasized = false) {
+export function swapButtonLabel(button: HTMLButtonElement, text: string, active: boolean, emphasized = false, shimmer = false) {
+  // Read the imported final weight. Motion must not add or subtract another 100.
+  const emphasisWeight = getComputedStyle(button).getPropertyValue('--font-weight-copy').trim() || getComputedStyle(button).fontWeight;
   const mountedId = button.id;
   const label = button.querySelector<HTMLElement>('.t-text-swap')!;
   let state = shortcutSwaps.get(button);
   if (!state) {
-    state = { next: { text, active, emphasized }, running: false, version: 0 }; shortcutSwaps.set(button, state);
+    state = { next: { text, active, emphasized, shimmer }, running: false, version: 0 }; shortcutSwaps.set(button, state);
     fitShortcutCopy(button, label);
   }
-  state.next = { text, active, emphasized };
+  state.next = { text, active, emphasized, shimmer };
   if (reduced()) {
     state.version++; state.running = false;
     state.cleanup?.(); state.cleanup = undefined;
     label.textContent = text; label.classList.remove('is-exit', 'is-enter-start');
-    label.style.fontWeight = emphasized ? '500' : '';
+    syncLabelShimmer(label, shimmer);
+    label.style.fontWeight = emphasized ? emphasisWeight : '';
     label.style.transitionDelay = '';
     button.classList.toggle('capturing', active); button.style.width = ''; button.style.height = '';
     fitShortcutCopy(button, label);
     return;
   }
   if (state.running) return;
-  const changed = () => label.textContent !== state.next.text || button.classList.contains('capturing') !== state.next.active || label.style.fontWeight !== (state.next.emphasized ? '500' : '');
+  const changed = () => label.textContent !== state.next.text || button.classList.contains('capturing') !== state.next.active || label.style.fontWeight !== (state.next.emphasized ? emphasisWeight : '') || label.classList.contains('t-shimmer') !== state.next.shimmer;
   if (!changed()) return;
   state.running = true;
   const version = ++state.version;
@@ -157,7 +165,8 @@ export function swapButtonLabel(button: HTMLButtonElement, text: string, active:
         const transition = button.style.transition;
         button.style.transition = 'none';
         label.textContent = target.text;
-        label.style.fontWeight = target.emphasized ? '500' : '';
+        syncLabelShimmer(label, target.shimmer);
+        label.style.fontWeight = target.emphasized ? emphasisWeight : '';
         const next = fitShortcutCopy(button, label);
         label.classList.add('is-enter-start');
         label.style.transitionDelay = `${duration('--shortcut-overlap-delay', 120, button)}ms`;
@@ -178,7 +187,7 @@ export function swapButtonLabel(button: HTMLButtonElement, text: string, active:
         label.classList.remove('is-enter-start');
         const surface = button.getAnimations().filter(animation => {
           const property = (animation as CSSTransition).transitionProperty;
-          return property === 'width' || property === 'height' || property === 'background-color' || property === 'color' || property?.startsWith('border-');
+          return property === 'width' || property === 'height' || property === 'background-color' || property === 'box-shadow' || property === 'color' || property?.startsWith('border-');
         });
         await Promise.all([
           pause(Math.max(outDuration, duration('--text-swap-dur', 250, label) + duration('--shortcut-overlap-delay', 120, button))),

@@ -1,0 +1,108 @@
+/* Primitive palette: literal pigment values live only in this file. */
+:root {
+  --p-white: #fff;
+  --p-ink: #1d1d1d;
+  --p-gray-150: #eee;
+  --p-canvas-light: #f6f6f6;
+  --p-gray-200: #e5e5e5;
+  --p-gray-300: #d9d9d9;
+  --p-gray-700: #383838;
+  --p-gray-850: #2f2f2f;
+  --p-green-dark: #31d158;
+  --p-green-light: #34c759;
+  --p-red-dark: #ff4245;
+  --p-red-light: #ff383c;
+  --p-blue-dark: #0091ff;
+  --p-blue-light: #0066cc;
+  --p-shadow: #000;
+  --p-pink: #ff375f;
+  --p-preview-neutral: #444;
+  --p-preview-checker: #505050;
+  --p-preview-light: var(--p-gray-150);
+  --p-preview-dark: #101010;
+
+  /* Semantic roles, defaulting to the original dark design. */
+  --bg-canvas: var(--p-ink);
+  --bg-raised: var(--p-gray-850);
+  --bg-overlay: color-mix(in srgb, var(--p-gray-850) 60%, transparent);
+  --bg-header: color-mix(in srgb, var(--bg-canvas) 70%, transparent);
+  --bg-scrim: color-mix(in srgb, var(--bg-canvas) 80%, transparent);
+  --text-primary: var(--p-white);
+  --text-secondary: color-mix(in srgb, var(--text-primary) 60%, transparent);
+  --text-label: color-mix(in srgb, var(--text-primary) 70%, transparent);
+  --text-muted: color-mix(in srgb, var(--text-primary) 50%, transparent);
+  --text-placeholder: color-mix(in srgb, var(--text-primary) 40%, transparent);
+  --text-notice: color-mix(in srgb, var(--text-primary) 46%, transparent);
+  --text-emphasis: color-mix(in srgb, var(--text-primary) 85%, transparent);
+  --text-inverse: var(--p-ink);
+  --border-window: var(--p-gray-700);
+  --border-subtle: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  --border-overlay: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  --border-input-focus: var(--text-placeholder);
+  --surface-subtle: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  --surface-control: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --surface-thumb: var(--p-white);
+  --interaction-hover: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  --interaction-hover-subtle: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  --interaction-active: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  --interaction-primary: var(--p-white);
+  --interaction-primary-hover: var(--p-gray-200);
+  --interaction-disabled: color-mix(in srgb, var(--text-primary) 20%, transparent);
+  --interaction-focus: var(--p-blue-dark);
+  --status-success: var(--p-green-dark);
+  --status-error: var(--p-red-dark);
+  --status-accent: var(--p-pink);
+  --caret-color: var(--p-gray-300);
+  --scrollbar: color-mix(in srgb, var(--text-primary) 14.5%, transparent);
+  --scrollbar-hover: color-mix(in srgb, var(--text-primary) 25%, transparent);
+  --separator-color: color-mix(in srgb, var(--text-primary) 32%, transparent);
+  --shadow-subtle: color-mix(in srgb, var(--p-shadow) 8%, transparent);
+  --shadow-menu: var(--shadow-subtle);
+  --shadow-raised: color-mix(in srgb, var(--p-shadow) 20%, transparent);
+
+  /* Component aliases reference roles rather than pigments. */
+  --window-bg: var(--bg-canvas);
+  --window-border: var(--border-window);
+  --button-bg: var(--surface-control);
+  --button-primary-bg: var(--interaction-primary);
+  --button-primary-text: var(--text-inverse);
+  --input-bg: var(--surface-subtle);
+  --input-border: var(--border-subtle);
+  --input-placeholder: var(--text-muted);
+  --toggle-off: var(--interaction-disabled);
+  --toggle-on: var(--status-success);
+  --toggle-thumb: var(--surface-thumb);
+  --menu-bg: var(--bg-raised);
+  --menu-overlay: var(--bg-overlay);
+  --indicator-color: var(--text-primary);
+  --indicator-error: var(--status-error);
+  --toast-bg: var(--bg-overlay);
+  --toast-text: var(--text-primary);
+  --toast-border: var(--border-subtle);
+}
+:root[data-theme="light"] {
+  --bg-canvas: var(--p-canvas-light);
+  --bg-raised: var(--p-gray-150);
+  --bg-overlay: color-mix(in srgb, var(--p-white) 60%, transparent);
+  --text-primary: var(--p-shadow);
+  --surface-control: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  --interaction-hover: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  --interaction-hover-subtle: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  --interaction-active: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --text-secondary: color-mix(in srgb, var(--text-primary) 65%, transparent);
+  --text-muted: color-mix(in srgb, var(--text-primary) 65%, transparent);
+  --text-placeholder: color-mix(in srgb, var(--text-primary) 62%, transparent);
+  --text-notice: color-mix(in srgb, var(--text-primary) 65%, transparent);
+  --text-inverse: var(--p-canvas-light);
+  --border-window: var(--p-gray-700);
+  --interaction-primary: var(--p-shadow);
+  --interaction-primary-hover: var(--p-gray-700);
+  --interaction-focus: var(--p-blue-light);
+  --border-input-focus: var(--interaction-focus);
+  --status-success: var(--p-green-light);
+  --status-error: var(--p-red-light);
+  --shadow-menu: color-mix(in srgb, var(--p-shadow) 4%, transparent);
+  --caret-color: var(--text-primary);
+}
+:root[data-theme="dark"] { color-scheme: dark; }
+:root[data-theme="light"] { color-scheme: light; }

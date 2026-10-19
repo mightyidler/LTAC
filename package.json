@@ -1,6 +1,6 @@
 {
   "name": "ltac",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,8 @@
     "desktop:build": "tauri build --no-bundle",
     "desktop:release": "npm run core:release && tauri build --bundles nsis",
     "core:release": "cargo build --release --locked --bins",
-    "test": "node tools/check-ui-inputs.mjs && node tools/check-app-update.mjs && node tools/check-page-motion.mjs && node tools/check-motion-time.mjs"
+    "test": "node tools/check-ui-inputs.mjs && node tools/check-app-update.mjs && node tools/check-page-motion.mjs && node tools/check-motion-time.mjs && node tools/check-localization.mjs",
+    "test:appearance": "node tools/check-theme-language.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

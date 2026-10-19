@@ -1,10 +1,6 @@
 import * as THREE from 'three';
-import { palette } from './palette';
 import { RibbonCurve, indicatorShape, ringRadii, completionPose } from './connection-motion';
 import { cssTimeMs } from './motion';
-
-const white = new THREE.Color(0xffffff);
-const failureRed = new THREE.Color().setRGB(palette.red[0] / 255, palette.red[1] / 255, palette.red[2] / 255, THREE.SRGBColorSpace);
 
 // Curve and completion choreography adapted from psyonline's Her / OS1 loader:
 // https://codepen.io/psyonline/pen/yayYWg (CodePen, MIT).
@@ -14,9 +10,9 @@ export class ConnectionIndicator {
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(indicatorShape.fov, indicatorShape.width / indicatorShape.height, 1, 1000);
   private group = new THREE.Group();
-  private ribbon = new THREE.Mesh(new THREE.TubeGeometry(new RibbonCurve(), 200, 1.1, 2, true), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true }));
+  private ribbon = new THREE.Mesh(new THREE.TubeGeometry(new RibbonCurve(), 200, 1.1, 2, true), new THREE.MeshBasicMaterial({ transparent: true }));
   // Match the projected triangular ribbon's edge, instead of the thick original ring.
-  private ring = new THREE.Mesh(new THREE.RingGeometry(ringRadii.inner, ringRadii.outer, 192), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, side: THREE.DoubleSide }));
+  private ring = new THREE.Mesh(new THREE.RingGeometry(ringRadii.inner, ringRadii.outer, 192), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.DoubleSide }));
   private frame = 0;
   private previous = 0;
   private outcome: 'loading' | 'success' | 'failure' = 'loading';
@@ -31,6 +27,18 @@ export class ConnectionIndicator {
   private idleSpeed = 4.2;
   private ribbonCenterDepth = { value: 48 };
   private onRing: (() => void) | null = null;
+  private pigment = new THREE.Color();
+  private failurePigment = new THREE.Color();
+  private ringColor = 0;
+  private onTheme = () => {
+    const style = getComputedStyle(this.host);
+    this.pigment.setStyle(style.getPropertyValue('--indicator-color').trim());
+    this.failurePigment.setStyle(style.getPropertyValue('--indicator-error').trim());
+    this.ribbon.material.color.copy(this.pigment);
+    this.ring.material.color.copy(this.pigment);
+    if (this.outcome === 'failure') this.ring.material.color.lerp(this.failurePigment, this.ringColor);
+    this.renderer?.render(this.scene, this.camera);
+  };
   private onPreference = () => { if (this.active && !this.settled) { cancelAnimationFrame(this.frame); this.previous = 0; this.frame = requestAnimationFrame(this.animate); } };
 
   constructor(private host: HTMLElement) {
@@ -41,7 +49,7 @@ export class ConnectionIndicator {
     path.style.strokeDashoffset = String(length);
     this.camera.position.z = indicatorShape.cameraZ;
     this.group.add(this.ribbon);
-    // White pigment with depth-dependent alpha, preserving the ribbon's volume.
+    // Theme pigment with depth-dependent alpha, preserving the ribbon's volume.
     // The center follows the camera fit so completion keeps the same shading.
     this.ribbon.material.onBeforeCompile = shader => {
       shader.uniforms.ribbonCenterDepth = this.ribbonCenterDepth;
@@ -60,11 +68,13 @@ export class ConnectionIndicator {
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
       this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
       this.renderer.setSize(140, 48);
-      this.renderer.setClearColor(0x000000, 0);
+      this.renderer.setClearAlpha(0);
       host.prepend(this.renderer.domElement);
       host.classList.add('has-webgl');
     } catch { /* Keep a transparent, animated fallback on machines without WebGL. */ }
     this.reduced.addEventListener('change', this.onPreference);
+    window.addEventListener('ltac-theme-change', this.onTheme);
+    this.onTheme();
   }
 
   start() {
@@ -77,7 +87,8 @@ export class ConnectionIndicator {
     this.group.position.set(0, 0, 0);
     this.ribbon.material.opacity = 1;
     this.ring.material.opacity = 0;
-    this.ring.material.color.set(0xffffff);
+    this.ringColor = 0;
+    this.onTheme();
     this.host.dataset.state = 'loading';
     this.idleSpeed = parseFloat(getComputedStyle(this.host).getPropertyValue('--indicator-idle-speed')) || 4.2;
     this.host.querySelector<HTMLElement>('.indicator-result')!.dataset.state = 'out';
@@ -118,7 +129,8 @@ export class ConnectionIndicator {
     this.group.position.x = 0;
     this.ribbon.material.opacity = pose.ribbonOpacity;
     this.ring.material.opacity = pose.ringOpacity;
-    if (this.outcome === 'failure') this.ring.material.color.copy(white).lerp(failureRed, pose.ringColor);
+    this.ringColor = pose.ringColor;
+    if (this.outcome === 'failure') this.ring.material.color.copy(this.pigment).lerp(this.failurePigment, pose.ringColor);
     this.renderer?.render(this.scene, this.camera);
     if (completing && pose.done && !this.settled) {
       this.settled = true;
@@ -147,6 +159,7 @@ export class ConnectionIndicator {
 
   stop() { this.active = false; cancelAnimationFrame(this.frame); clearTimeout(this.completionTimer); this.onRing = null; this.resolve?.(); this.resolve = null; }
   destroy() {
+    window.removeEventListener('ltac-theme-change', this.onTheme);
     this.stop(); this.reduced.removeEventListener('change', this.onPreference);
     this.renderer?.dispose(); this.ribbon.geometry.dispose(); this.ribbon.material.dispose(); this.ring.geometry.dispose(); this.ring.material.dispose();
   }

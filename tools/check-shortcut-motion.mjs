@@ -76,7 +76,7 @@ try {
   swapShortcutLabel(normal.button,'키를 눌러주세요',true,true);
   await advance(80);
   const outgoing=normal.button.copies[0];
-  assert.equal(normal.label.style.fontWeight,'500','Prompt is measured at its emphasized weight');
+  assert.equal(normal.label.style.fontWeight,'400','Prompt uses the imported JSON Medium weight after one correction');
   assert.equal(outgoing.style.fontWeight,'400','Outgoing copy keeps its previous weight');
   assert.equal(outgoing.classList.contains('is-exit'),true);
   swapShortcutLabel(normal.button,'저장 중',true);

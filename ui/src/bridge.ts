@@ -29,9 +29,10 @@ export async function checkAppUpdate(progress: () => void): Promise<UpdateResult
 let preview: Snapshot = { ...initialState, stage: 'choose', choices: demoChoices, shortcut_enabled: true };
 let operation = 0;
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-export async function connect(onState: (state: Snapshot) => void) {
+export async function connect(onState: (state: Snapshot) => void, onOpen: (state: Snapshot) => void = onState) {
   if (desktop) {
     await listen<Snapshot>('ltac-state', event => onState(event.payload));
+    await listen<Snapshot>('ltac-opened', event => onOpen(event.payload));
     onState(await invoke<Snapshot>('snapshot'));
   } else onState(preview);
 }

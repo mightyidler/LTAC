@@ -156,6 +156,63 @@ fn save_preferences(config: &Path, automatic: bool) -> Result<()> {
     Ok(())
 }
 
+fn initial_view(
+    path: &Path,
+    autostart: bool,
+    service_mode: bool,
+) -> Result<(Snapshot, Preferences)> {
+    let legacy = Config::load(path).ok();
+    let mut saved = ui::configs(path)?;
+    if saved.is_empty()
+        && let Some(config) = legacy.as_ref().filter(|c| c.protected_key.is_some())
+    {
+        ui::remember(path, config)?;
+        saved = ui::configs(path)?;
+    }
+    // Persist the first launch even if the user closes before registering a TV.
+    // Existing preferences also identify returning users of older releases.
+    let first_run = !preferences_path(path).exists();
+    let preferences: Preferences = fs::read(preferences_path(path))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
+    if first_run {
+        save_preferences(path, preferences.automatic)?;
+    }
+    let devices = ui::devices(path)?;
+    let configured = !devices.is_empty();
+    let mut initial = Snapshot {
+        configured,
+        name: "LG webOS TV".into(),
+        stage: "searching".into(),
+        choices: Vec::new(),
+        manual_allowed: false,
+        wake_available: false,
+        wake_verified: false,
+        power: "unknown".into(),
+        automatic: preferences.automatic,
+        autostart,
+        service_mode,
+        busy: false,
+        checked_at: None,
+        error: None,
+        devices,
+        shortcut_enabled: preferences.shortcut_enabled,
+        shortcut: preferences.shortcut.clone(),
+    };
+    if let Some(config) = saved.first().or(legacy.as_ref()) {
+        apply_config(&mut initial, config);
+    }
+    initial.configured = configured;
+    initial.stage = if configured || !first_run {
+        "ready"
+    } else {
+        "searching"
+    }
+    .into();
+    Ok((initial, preferences))
+}
+
 fn observe(view: &RwLock<Snapshot>, app: &tauri::AppHandle, event: &str, data: &Value) {
     match event {
         "connection_saved" => update(view, app, |s| {
@@ -530,6 +587,7 @@ async fn discover_tvs(
 async fn cancel_connection(
     state: State<'_, Desktop>,
     app: tauri::AppHandle,
+    home: Option<bool>,
 ) -> std::result::Result<Snapshot, String> {
     if read(&state)?.stage == "pairing" {
         state.pair_cancel.notify_waiters();
@@ -538,19 +596,21 @@ async fn cancel_connection(
         state.discovery_cancel.notify_waiters();
     }
     let _operation = state.operation.lock().await;
-    if let Ok(config) = Config::load(&state.path) {
-        update(&state.view, &app, |s| {
-            apply_config(s, &config);
-            s.busy = false;
-            s.error = None;
-        });
-    } else {
-        update(&state.view, &app, |s| {
-            s.stage = "choose".into();
-            s.busy = false;
-            s.error = None;
-        });
-    }
+    let config = Config::load(&state.path).ok();
+    update(&state.view, &app, |s| {
+        if let Some(config) = &config {
+            apply_config(s, config);
+        }
+        s.configured = !s.devices.is_empty();
+        s.stage = if s.configured || home.unwrap_or(false) {
+            "ready"
+        } else {
+            "choose"
+        }
+        .into();
+        s.busy = false;
+        s.error = None;
+    });
     read(&state)
 }
 
@@ -717,6 +777,29 @@ async fn resume_automatic(state: &Desktop, app: &tauri::AppHandle, enabled: bool
 }
 
 fn show(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let state = handle.state::<Desktop>();
+            // Keep a live pairing visible rather than waiting on its operation
+            // lock while the TV is asking for approval.
+            if read(&state).is_ok_and(|s| s.stage != "pairing") {
+                state.discovery_cancel.notify_waiters();
+                let _operation = state.operation.lock().await;
+                update(&state.view, &handle, |s| {
+                    s.stage = "ready".into();
+                    s.busy = false;
+                });
+                if let Ok(snapshot) = read(&state) {
+                    let _ = handle.emit("ltac-opened", snapshot);
+                }
+            }
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        });
+        return;
+    }
     if app.get_webview_window("main").is_none() {
         let result = app
             .config()
@@ -786,40 +869,11 @@ fn setup(app: &mut tauri::App) -> Result<()> {
         .open(directory.join("command.lock"))?;
     lock.try_lock()
         .context("다른 LTAC가 실행 중입니다. CLI를 종료한 뒤 다시 열어 주세요.")?;
-    let config = Config::load(&path).ok();
-    if let Some(config) = &config
-        && ui::configs(&path)?.is_empty()
-    {
-        ui::remember(&path, config)?;
-    }
-    let preferences: Preferences = fs::read(preferences_path(&path))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default();
     app.autolaunch().enable()?;
-    let configured = config.as_ref().is_some_and(|c| c.protected_key.is_some());
-    let mut initial_view = Snapshot {
-        configured,
-        name: "LG webOS TV".into(),
-        stage: "searching".into(),
-        choices: Vec::new(),
-        manual_allowed: false,
-        wake_available: false,
-        wake_verified: false,
-        power: "unknown".into(),
-        automatic: preferences.automatic,
-        autostart: app.autolaunch().is_enabled()?,
-        service_mode,
-        busy: false,
-        checked_at: None,
-        error: None,
-        devices: ui::devices(&path)?,
-        shortcut_enabled: preferences.shortcut_enabled,
-        shortcut: preferences.shortcut.clone(),
-    };
-    if let Some(config) = &config {
-        apply_config(&mut initial_view, config);
-    }
+    let (initial_view, preferences) =
+        initial_view(&path, app.autolaunch().is_enabled()?, service_mode)?;
+    let configured = initial_view.configured;
+    let discover_on_start = initial_view.stage == "searching";
     let view = Arc::new(RwLock::new(initial_view));
     let observer_view = view.clone();
     let observer_app = app.handle().clone();
@@ -961,7 +1015,9 @@ fn setup(app: &mut tauri::App) -> Result<()> {
             // Discovery owns this lock itself. Do not gate first-run discovery
             // on service configuration or recursively acquire the same lock.
             drop(_operation);
-            let _ = do_discover(&state, &handle).await;
+            if discover_on_start {
+                let _ = do_discover(&state, &handle).await;
+            }
             return;
         }
         if state.service_mode {
@@ -994,6 +1050,18 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     )?;
     let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &automatic, &quit])?;
+    app.manage(UiMenu {
+        open,
+        automatic,
+        quit,
+    });
+    let language = app
+        .path()
+        .app_config_dir()
+        .ok()
+        .and_then(|path| fs::read_to_string(path.join("ui-language.txt")).ok())
+        .unwrap_or_else(system_locale);
+    let _ = set_ui_language(app.handle().clone(), language);
     // Select the original-derived ICO entry at the tray's native pixel size.
     // The window's default icon uses the larger taskbar size.
     let tray_size = unsafe {
@@ -1066,6 +1134,52 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     Ok(())
 }
 
+struct UiMenu {
+    open: MenuItem<tauri::Wry>,
+    automatic: MenuItem<tauri::Wry>,
+    quit: MenuItem<tauri::Wry>,
+}
+
+#[tauri::command]
+fn set_ui_language(app: tauri::AppHandle, language: String) -> std::result::Result<(), String> {
+    let code = language.split(['-', '_']).next().unwrap_or("en");
+    let labels = match code {
+        "ko" => ["LTAC 열기", "자동 동기화 켜기 / 끄기", "종료"],
+        "ja" => ["LTACを開く", "自動同期のオン／オフ", "終了"],
+        _ => ["Open LTAC", "Toggle automatic sync", "Quit"],
+    };
+    let menu = app.state::<UiMenu>();
+    menu.open.set_text(labels[0]).map_err(|e| e.to_string())?;
+    menu.automatic
+        .set_text(labels[1])
+        .map_err(|e| e.to_string())?;
+    menu.quit.set_text(labels[2]).map_err(|e| e.to_string())?;
+    if let Ok(path) = app.path().app_config_dir() {
+        fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+        fs::write(path.join("ui-language.txt"), code).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn system_locale() -> String {
+    let mut name = [0u16; 85];
+    // The Windows display language can differ from the regional date/number locale.
+    let length = unsafe {
+        windows_sys::Win32::Globalization::LCIDToLocaleName(
+            windows_sys::Win32::Globalization::GetUserDefaultUILanguage() as u32,
+            name.as_mut_ptr(),
+            name.len() as i32,
+            0,
+        )
+    };
+    if length > 1 {
+        String::from_utf16_lossy(&name[..length as usize - 1])
+    } else {
+        "en".into()
+    }
+}
+
 pub fn run() -> Result<()> {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1083,6 +1197,8 @@ pub fn run() -> Result<()> {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            system_locale,
+            set_ui_language,
             snapshot,
             refresh_status,
             set_automatic,
@@ -1097,4 +1213,100 @@ pub fn run() -> Result<()> {
         ])
         .run(tauri::generate_context!())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+
+    fn config(paired: bool) -> Config {
+        Config {
+            ip: "192.0.2.1".parse().unwrap(),
+            mac: None,
+            device: None,
+            wake_verified: false,
+            source_path: None,
+            // Opaque sentinel: startup tests never decrypt a key or contact a TV.
+            protected_key: paired.then(|| vec![1]),
+            certificate_sha256: None,
+            broadcast: "192.0.2.255".parse().unwrap(),
+            transport: ltac::config::Transport::Auto,
+        }
+    }
+
+    #[test]
+    fn only_the_first_unconfigured_launch_opens_discovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        let (first, _) = initial_view(&path, true, true).unwrap();
+        assert_eq!(first.stage, "searching");
+        assert!(!first.configured);
+        assert!(preferences_path(&path).exists());
+        let (second, _) = initial_view(&path, true, true).unwrap();
+        assert_eq!(second.stage, "ready");
+        assert!(!second.configured);
+        assert!(second.devices.is_empty());
+    }
+
+    #[test]
+    fn saved_devices_open_home_without_a_usable_legacy_config() {
+        for legacy in [None, Some("unpaired"), Some("invalid")] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("config.json");
+            ui::remember(&path, &config(true)).unwrap();
+            match legacy {
+                Some("unpaired") => config(false).save(&path).unwrap(),
+                Some("invalid") => fs::write(&path, b"invalid").unwrap(),
+                _ => {}
+            }
+            let before = fs::read_dir(path.with_file_name("devices"))
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path();
+            let bytes = fs::read(&before).unwrap();
+            let (view, _) = initial_view(&path, true, true).unwrap();
+            assert_eq!(view.stage, "ready");
+            assert!(view.configured);
+            assert_eq!(view.devices.len(), 1);
+            assert_eq!(fs::read(&before).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn paired_legacy_config_is_migrated_and_opens_home() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        config(true).save(&path).unwrap();
+        let (view, _) = initial_view(&path, false, false).unwrap();
+        assert!(view.configured);
+        assert_eq!(view.stage, "ready");
+        assert_eq!(view.devices.len(), 1);
+    }
+
+    #[test]
+    fn unpaired_legacy_config_is_not_registered_as_a_device() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        config(false).save(&path).unwrap();
+        let (view, _) = initial_view(&path, false, false).unwrap();
+        assert!(!view.configured);
+        assert_eq!(view.stage, "searching");
+        assert!(view.devices.is_empty());
+    }
+
+    #[test]
+    fn returning_empty_home_preserves_existing_preferences() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        let bytes = br#"{"automatic":false,"shortcut_enabled":true,"shortcut":"Ctrl+K"}"#;
+        fs::write(preferences_path(&path), bytes).unwrap();
+        let (view, _) = initial_view(&path, true, true).unwrap();
+        assert_eq!(view.stage, "ready");
+        assert!(!view.automatic);
+        assert!(view.shortcut_enabled);
+        assert_eq!(view.shortcut.as_deref(), Some("Ctrl+K"));
+        assert_eq!(fs::read(preferences_path(&path)).unwrap(), bytes);
+    }
 }

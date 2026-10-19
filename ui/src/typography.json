@@ -1,0 +1,240 @@
+{
+  "sourceSha256": "88607b0289330e96bdfd677eff833ade348f188dd142fc1a1b3013068482dd75",
+  "adjustment": -100,
+  "entries": [
+    {
+      "selector": ":root",
+      "component": "Component",
+      "path": "Component/연결-장치 리스트/Frame 10/Frame 3/Header",
+      "text": "LGTV Auto Control",
+      "originalStyle": "Regular",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".page-heading p",
+      "component": "Component",
+      "path": "Component/연결-장치 리스트/Frame 10/Frame 3/Header",
+      "text": "LGTV Auto Control",
+      "originalStyle": "Regular",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".page-heading h1",
+      "component": "Component",
+      "path": "Component/연결-장치 리스트/Frame 10/Frame 3/Subtitle",
+      "text": "연결할 장치를 선택하세요",
+      "originalStyle": "SemiBold",
+      "originalWeight": 600,
+      "weight": 500
+    },
+    {
+      "selector": "#compact-title",
+      "component": "Component8",
+      "path": "Component8/언어/Header Icons/Subtitle",
+      "text": "언어",
+      "originalStyle": "SemiBold",
+      "originalWeight": 600,
+      "weight": 500
+    },
+    {
+      "selector": ".device-choice",
+      "component": "Component",
+      "path": "Component/연결-장치 리스트/Frame 10/Frame 7/Hover/OLED42C4ENA",
+      "text": "OLED42C4ENA",
+      "originalStyle": "Medium",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".action:not(.primary)",
+      "component": "Component",
+      "path": "Component/연결-장치 리스트/Frame 9/Frame 8/직접 입력",
+      "text": "직접 입력",
+      "originalStyle": "Medium",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".action.primary",
+      "component": "Component",
+      "path": "Component/연결-장치 리스트/Frame 9/Frame 9/연결",
+      "text": "연결",
+      "originalStyle": "SemiBold",
+      "originalWeight": 600,
+      "weight": 500
+    },
+    {
+      "selector": ".empty-state p",
+      "component": "Component5",
+      "path": "Component5/연결-장치 리스트-장치 없음/Frame 10/Frame 12/장치를 찾을 수 없어요",
+      "text": "장치를 찾을 수 없어요",
+      "originalStyle": "Medium",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".empty-state small",
+      "component": "Component5",
+      "path": "Component5/연결-장치 리스트-장치 없음/Frame 10/Frame 12/같은 네트워크에 연결되어 있는지 확인해주세요",
+      "text": "같은 네트워크에 연결되어 있는지 확인해주세요",
+      "originalStyle": "Regular",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".field-group label",
+      "component": "Component7",
+      "path": "Component7/연결-직접 입력 완료/Frame 10/Frame 20/Frame 19/IP 주소",
+      "text": "IP 주소",
+      "originalStyle": "Regular",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".segments input, .empty-caret",
+      "component": "Component7",
+      "path": "Component7/연결-직접 입력 완료/Frame 10/Frame 20/Frame 22/Frame 18/192",
+      "text": "192",
+      "originalStyle": "Regular",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".connection-copy h1",
+      "component": "Component6",
+      "path": "Component6/연결-연결 요청/Frame 17/Frame 16/TV에서 연결을 허용해 주세요",
+      "text": "{{tv_characters}}",
+      "originalStyle": "SemiBold",
+      "originalWeight": 600,
+      "weight": 500
+    },
+    {
+      "selector": ".connection-copy p",
+      "component": "Component6",
+      "path": "Component6/연결-연결 요청/Frame 17/Frame 16/OLED42C4ENA",
+      "text": "{{oled42c4ena_characters}}",
+      "originalStyle": "Medium",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".home-scroll h2",
+      "component": "Component2",
+      "path": "Component2/홈(설정)/Frame 99/Frame 6/Frame 19/기기 목록",
+      "text": "기기 목록",
+      "originalStyle": "Regular",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".home-devices-empty p",
+      "component": "Frame",
+      "path": "Frame/Frame 99/Frame 6/Frame 6/연결된 기기가 없습니다",
+      "text": "연결된 기기가 없습니다",
+      "originalStyle": "Medium",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".device-info p",
+      "component": "Component2",
+      "path": "Component2/홈(설정)/Frame 99/Frame 6/Frame 7/Frame 32/OLED42C4ENA",
+      "text": "OLED42C4ENA",
+      "originalStyle": "Medium",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".device-info small",
+      "component": "Component2",
+      "path": "Component2/홈(설정)/Frame 99/Frame 6/Frame 7/Frame 32/A5:D3:31:F3:35:A8",
+      "text": "A5:D3:31:F3:35:A8",
+      "originalStyle": "Regular",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".setting-copy p, .preference-row > .setting-copy",
+      "component": "Component2",
+      "path": "Component2/홈(설정)/Frame 99/Frame 92/Save Location Item/Save Location Description/Monitor Folder Label",
+      "text": "전원 동기화",
+      "originalStyle": "Medium",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".setting-copy small",
+      "component": "Component2",
+      "path": "Component2/홈(설정)/Frame 99/Frame 92/Save Location Item/Save Location Description/Monitor Folder Description",
+      "text": "PC 전원에 맞춰 TV도 자동으로 켜지고 꺼집니다",
+      "originalStyle": "Regular",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".shortcut-setting p",
+      "component": "Component2",
+      "path": "Component2/홈(설정)/Frame 99/Frame 92/Frame 93/Save Location Item/Monitor Folder Label",
+      "text": "단축키 설정",
+      "originalStyle": "Medium",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".shortcut-button, .shortcut-button .t-text-swap",
+      "component": "Component2",
+      "path": "Component2/홈(설정)/Frame 99/Frame 92/Frame 93/Save Location Item/Frame 88/Display Language Label",
+      "text": "단축키 지정",
+      "originalStyle": "Medium",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".device-menu [data-action=\"edit\"]",
+      "component": "Component3",
+      "path": "Component3/홈(설정)/Frame 99/Frame 6/Frame 6/Remove Folder Button Container/Frame 97/Frame 96/정보 수정",
+      "text": "정보 수정",
+      "originalStyle": "Medium",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".device-menu [data-action=\"remove\"]",
+      "component": "Component3",
+      "path": "Component3/홈(설정)/Frame 99/Frame 6/Frame 6/Remove Folder Button Container/Frame 97/Frame 95/삭제",
+      "text": "삭제",
+      "originalStyle": "Medium",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".preference-link, .preference-value",
+      "component": "Component2",
+      "path": "Component2/홈(설정)/Frame 99/Frame 93/Save Location Item/Language Dropdown/Selected Language",
+      "text": "한국어",
+      "originalStyle": "Regular",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": "[data-view=\"language\"] .preference-option",
+      "component": "Component8",
+      "path": "Component8/언어/Frame 10/Frame 7/Frame 4/한국어",
+      "text": "한국어",
+      "originalStyle": "Medium",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": "[data-view=\"theme\"] .preference-option",
+      "component": "Component9",
+      "path": "Component9/테마/Frame 10/Frame 7/Frame 4/시스템",
+      "text": "시스템",
+      "originalStyle": "Medium",
+      "originalWeight": 500,
+      "weight": 400
+    }
+  ]
+}

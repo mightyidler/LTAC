@@ -1,12 +1,12 @@
-.web-preview { min-width: 760px; min-height: 580px; display: flex; justify-content: center; align-items: center; gap: 64px; padding: 32px; background: #444; overflow: auto; }
-.web-preview[data-background="checker"] { background: repeating-conic-gradient(#505050 0 25%, #444 0 50%) 0 / 20px 20px; }
-.web-preview[data-background="light"] { background: #eee; }
-.web-preview[data-background="dark"] { background: #101010; }
+.web-preview { min-width: 760px; min-height: 580px; display: flex; justify-content: center; align-items: center; gap: 64px; padding: 32px; background: var(--p-preview-neutral); overflow: auto; }
+.web-preview[data-background="checker"] { background: repeating-conic-gradient(var(--p-preview-checker) 0 25%, var(--p-preview-neutral) 0 50%) 0 / 20px 20px; }
+.web-preview[data-background="light"] { background: var(--p-preview-light); }
+.web-preview[data-background="dark"] { background: var(--p-preview-dark); }
 .web-preview #app { flex: 0 0 383px; align-self: flex-start; margin-top: 68px; }
-.preview-tools { width: 280px; flex-shrink: 0; padding: 24px; border: 1px solid #ffffff18; border-radius: 16px; background: #222; color: #fff; }
-.preview-eyebrow { font-size: 10px; color: #ffffff60; margin-bottom: 12px; }
-.preview-tools h2 { font-size: 18px; font-weight: 600; margin-bottom: 12px; }
-.preview-description { font-size: 12px; line-height: 1.7; color: #ffffff80; margin-bottom: 20px; }
-.preview-tools label { display: block; color: #ffffffa0; font-size: 12px; margin-bottom: 12px; }
-.preview-tools select, .preview-tools input { display: block; width: 100%; height: 32px; margin-top: 6px; padding: 0 8px; background: #303030; color: #fff; border: 1px solid #ffffff18; border-radius: 6px; font: inherit; }
-.preview-tools button { width: 100%; padding: 9px; background: #fff; color: #222; border-radius: 6px; font-size: 12px; margin: 4px 0 18px; }
+.preview-tools { width: 280px; flex-shrink: 0; padding: 25px; box-shadow: inset 0 0 0 1px var(--border-overlay); border-radius: 16px; background: var(--bg-canvas); color: var(--text-primary); }
+.preview-eyebrow { font-size: 10px; color: var(--text-placeholder); margin-bottom: 12px; }
+.preview-tools h2 { font-size: 18px; font-weight: var(--font-weight-heading); margin-bottom: 12px; }
+.preview-description { font-size: 12px; line-height: 1.7; color: var(--text-muted); margin-bottom: 20px; }
+.preview-tools label { display: block; color: var(--text-label); font-size: 12px; margin-bottom: 12px; }
+.preview-tools select, .preview-tools input { display: block; width: 100%; height: 32px; margin-top: 6px; padding: 1px 9px; background: var(--bg-raised); color: var(--text-primary); border: 0; box-shadow: inset 0 0 0 1px var(--border-overlay); border-radius: 6px; font: inherit; }
+.preview-tools button { width: 100%; padding: 9px; background: var(--button-primary-bg); color: var(--button-primary-text); border-radius: 6px; font-size: 12px; margin: 4px 0 18px; }

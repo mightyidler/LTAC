@@ -1,3 +1,4 @@
+import { t } from './i18n';
 import { duration } from './motion';
 
 // Shared 16px viewport, 1.6px stroke and 9⅓px glyph height in both states.
@@ -47,7 +48,7 @@ export class Navigation {
     this.mode = mode;
     this.button.hidden = mode === null;
     this.button.dataset.mode = mode ?? '';
-    this.button.setAttribute('aria-label', mode === 'add' ? '기기 추가' : '뒤로');
+    this.button.setAttribute('aria-label', mode === 'add' ? t("기기 추가") : t("뒤로"));
     if (!mode) return;
     const target = mode === 'back' ? 1 : 0;
     const from = this.progress;

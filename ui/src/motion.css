@@ -150,17 +150,17 @@
   --reveal-ease: ease-in-out;
   /* Shimmer text */
   --shimmer-dur: 2000ms;
-  --shimmer-base: #7c7c7c;
-  --shimmer-highlight: #0d0d0d;
+  --shimmer-base: var(--text-muted);
+  --shimmer-highlight: var(--text-primary);
   --shimmer-band: 400%;
   --shimmer-ease: linear;
   /* Tabs sliding */
   --tabs-dur: 250ms;
   --tabs-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --tabs-text-muted: rgba(15, 15, 15, 0.8);
-  --tabs-text-active: #0f0f0f;
-  --tabs-bar-bg: #f1f1f1;
-  --tabs-pill-bg: #ffffff;
+  --tabs-text-muted: var(--text-secondary);
+  --tabs-text-active: var(--text-primary);
+  --tabs-bar-bg: var(--surface-subtle);
+  --tabs-pill-bg: var(--bg-raised);
   /* Tooltip open/close */
   --tt-in-dur: 150ms;
   --tt-out-dur: 50ms;
@@ -170,8 +170,8 @@
   --tt-out-ease: ease-out;
   --tt-move-dur: 160ms;
   --tt-move-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --tt-bg: #ffffff;
-  --tt-fg: #2f2f2f;
+  --tt-bg: var(--bg-raised);
+  --tt-fg: var(--text-primary);
   /* Texts reveal */
   --stagger-dur: 500ms;
   --stagger-distance: 12px;
@@ -212,7 +212,7 @@
   --toast-scale: 0.97;
   --toast-ease: cubic-bezier(0.22, 1, 0.36, 1);
   /* Like button */
-  --like-color: var(--color-pink);
+  --like-color: var(--status-accent);
   --like-fill: 150ms;
   --like-pop: 350ms;
   --like-pop-ease: cubic-bezier(0.34, 1.96, 0.64, 1);
@@ -252,8 +252,8 @@
   --think-distance: 8px;
   --think-blur: 2px;
   --think-shimmer: 2000ms;
-  --think-base: #7c7c7c;
-  --think-highlight: #0d0d0d;
+  --think-base: var(--text-muted);
+  --think-highlight: var(--text-primary);
   --think-ease: ease-in-out;
   /* Reasoning stream */
   --reason-hold: 840ms;
@@ -268,8 +268,8 @@
   --stream-ease: cubic-bezier(0.22, 1, 0.36, 1);
   /* Matrix dot loader */
   --matrix-cycle: 1200ms;
-  --matrix-base: #d9d9d9;
-  --matrix-active: #85858f;
+  --matrix-base: var(--surface-control);
+  --matrix-active: var(--text-secondary);
   --matrix-ease: ease-in-out;
   /* Banner stacking */
   --stack-open: 350ms;
@@ -504,19 +504,17 @@
 }
 
 /* transitions.dev: 12-error-state-shake.md */
-/* Border-color tween. Define your input's default / focused
-   / error border-color in your own component CSS — this rule
-   only owns the interpolation. Use a constant border-width
-   across states so the tween never shifts inner content. */
+/* Input edges use a 1px inset shadow in each state so changing
+   the edge color never shifts the input's inner content. */
 .t-input {
-  transition: border-color 150ms ease-out;
+  transition: box-shadow 150ms ease-out;
   will-change: transform;
 }
 .t-input.is-error {
-  /* Error border auto-reverts on the hold timer, so the
+  /* Error edge auto-reverts on the hold timer, so the
      fade-out uses the slower revert duration (matches the
      message fade). */
-  transition: border-color var(--revert-dur, 280ms) ease-out;
+  transition: box-shadow var(--revert-dur, 280ms) ease-out;
 }
 
 /* Error message reveal. Visibility is delayed by --revert-dur
@@ -680,6 +678,25 @@
   .t-toast { transition: none !important; }
 }
 
+
+/* transitions.dev: 15-shimmer-text.md */
+.t-shimmer { position: relative; display: inline-block; color: var(--shimmer-base); }
+.t-shimmer::before {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(90deg, transparent 0%, transparent 40%, var(--shimmer-highlight) 50%, transparent 60%, transparent 100%);
+  background-size: var(--shimmer-band) 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: t-shimmer var(--shimmer-dur) var(--shimmer-ease) infinite;
+}
+@keyframes t-shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+@media (prefers-reduced-motion: reduce) { .t-shimmer::before { animation: none !important; } }
 
 /* transitions.dev: 07-panel-reveal.md */
 .t-panel-slide {

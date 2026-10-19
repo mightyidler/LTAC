@@ -19,6 +19,10 @@ class Page {
 }
 const pages = () => { const root = {}; return [new Page(root), new Page(root)]; };
 assert.equal(pageTransitionMode('home', 'choose', false), 'push');
+for (const page of ['language', 'theme']) {
+  assert.equal(pageTransitionMode('home', page, false), 'push');
+  assert.equal(pageTransitionMode(page, 'home', true), 'pop');
+}
 assert.equal(pageTransitionMode('choose', 'manual', false), 'push');
 assert.equal(pageTransitionMode('home', 'edit-tv-0', false), 'push');
 assert.equal(pageTransitionMode('manual', 'connection', false), 'push');

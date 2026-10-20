@@ -1,12 +1,13 @@
 //! Event-only Windows power notifications. A hidden top-level window receives
 //! WM_POWERBROADCAST; no timer, polling, service or visible window is created.
+use crate::sync::NoticeSender;
 use crate::sync::{Event, Notice};
 use anyhow::{Context, Result, bail};
 use std::{
     ptr::{null, null_mut},
     time::Duration,
 };
-use tokio::sync::{mpsc::UnboundedSender, oneshot};
+use tokio::sync::oneshot;
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, WPARAM},
     NetworkManagement::IpHelper::{
@@ -34,8 +35,50 @@ pub struct Source {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 struct ContextData {
-    sender: UnboundedSender<Notice>,
+    sender: NoticeSender,
     wait_for_suspend: bool,
+    display_connections: std::cell::RefCell<Option<Vec<(i32, u32, u32)>>>,
+}
+
+/// Read connector IDs only on native notifications; never poll or read EDID here.
+fn display_connections() -> Option<Vec<(i32, u32, u32)>> {
+    use windows_sys::Win32::Devices::Display::{
+        DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_PATH_INFO, GetDisplayConfigBufferSizes,
+        QDC_ONLY_ACTIVE_PATHS, QueryDisplayConfig,
+    };
+    unsafe {
+        let (mut path_count, mut mode_count) = (0, 0);
+        if GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut path_count, &mut mode_count) != 0
+        {
+            return None;
+        }
+        let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); path_count as usize];
+        let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); mode_count as usize];
+        if QueryDisplayConfig(
+            QDC_ONLY_ACTIVE_PATHS,
+            &mut path_count,
+            paths.as_mut_ptr(),
+            &mut mode_count,
+            modes.as_mut_ptr(),
+            null_mut(),
+        ) != 0
+        {
+            return None;
+        }
+        let mut connections = paths[..path_count as usize]
+            .iter()
+            .map(|path| {
+                let target = &path.targetInfo;
+                (
+                    target.adapterId.HighPart,
+                    target.adapterId.LowPart,
+                    target.id,
+                )
+            })
+            .collect::<Vec<_>>();
+        connections.sort_unstable();
+        Some(connections)
+    }
 }
 
 struct NetworkRegistration(windows_sys::Win32::Foundation::HANDLE);
@@ -56,6 +99,7 @@ unsafe extern "system" fn network_changed(
     if !context.is_null() {
         let context = unsafe { &*context.cast::<ContextData>() };
         let _ = context.sender.send(Notice {
+            preceding: None,
             event: Event::NetworkChanged,
             suspend_ack: None,
         });
@@ -63,7 +107,7 @@ unsafe extern "system" fn network_changed(
 }
 
 impl Source {
-    pub async fn start(sender: UnboundedSender<Notice>, wait_for_suspend: bool) -> Result<Self> {
+    pub async fn start(sender: NoticeSender, wait_for_suspend: bool) -> Result<Self> {
         let (ready_tx, ready_rx) = oneshot::channel();
         let thread = std::thread::spawn(move || {
             let mut ready_tx = Some(ready_tx);
@@ -72,6 +116,7 @@ impl Source {
                     ContextData {
                         sender,
                         wait_for_suspend,
+                        display_connections: std::cell::RefCell::new(display_connections()),
                     },
                     &mut ready_tx,
                 )
@@ -255,6 +300,7 @@ unsafe extern "system" fn window_proc(
                         if (*context)
                             .sender
                             .send(Notice {
+                                preceding: None,
                                 event: Event::SessionEnding,
                                 suspend_ack: ack,
                             })
@@ -280,9 +326,30 @@ unsafe extern "system" fn window_proc(
                     && let Some(event) = event
                 {
                     let _ = (*context).sender.send(Notice {
+                        preceding: None,
                         event,
                         suspend_ack: None,
                     });
+                }
+                return 0;
+            }
+            WM_DISPLAYCHANGE | WM_DEVICECHANGE => {
+                let context = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const ContextData;
+                if !context.is_null()
+                    && let Some(current) = display_connections()
+                {
+                    let mut previous = (*context).display_connections.borrow_mut();
+                    // Ignore USB, network and resolution-only changes. This is
+                    // OS topology state, not an HDMI observation or OFF cache.
+                    let changed = previous.as_ref().is_some_and(|old| *old != current);
+                    *previous = Some(current);
+                    if changed {
+                        let _ = (*context).sender.send(Notice {
+                            preceding: None,
+                            event: Event::DisplayTopologyChanged,
+                            suspend_ack: None,
+                        });
+                    }
                 }
                 return 0;
             }
@@ -325,6 +392,7 @@ unsafe extern "system" fn window_proc(
                         if (*context)
                             .sender
                             .send(Notice {
+                                preceding: None,
                                 event,
                                 suspend_ack: ack,
                             })
@@ -361,7 +429,7 @@ mod tests {
         // Actual Win32 APIs, no TV traffic. Reopening proves both registration
         // handles, the hidden HWND and its class have been released.
         for _ in 0..2 {
-            let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+            let (sender, _receiver) = crate::sync::notice_channel();
             let source = Source::start(sender, false).await.unwrap();
             let hwnd = source.hwnd;
             assert_ne!(unsafe { IsWindow(hwnd as HWND) }, 0);

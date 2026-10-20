@@ -131,7 +131,7 @@ async fn run() -> Result<()> {
     fs::create_dir_all(dir)?;
     // The lock is released by the OS on exit, including Ctrl+C. No resident process.
     let _lock = acquire_lock(dir.join("command.lock"))?;
-    let mut journal = Journal::open(&dir.join("events.jsonl"))?;
+    let mut journal = Journal::open(&dir.join("events.jsonl"))?.best_effort();
     let name = match &cli.command {
         #[cfg(windows)]
         Command::ServiceExport { .. } => "service_export",
@@ -285,6 +285,8 @@ async fn execute(command: Command, path: &std::path::Path, journal: &mut Journal
             device: None,
             source_path: None,
             wake_verified: false,
+            pc_hdmi: None,
+            pc_hdmi_source: Default::default(),
             protected_key: None,
             certificate_sha256: None,
         }

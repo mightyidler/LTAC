@@ -16,6 +16,7 @@
     ]
   },
   "include": [
-    "ui/src"
+    "ui/src",
+    "ui/dev"
   ]
 }

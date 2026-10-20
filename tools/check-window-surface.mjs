@@ -7,7 +7,7 @@ import sharp from 'sharp';
 const { chromium } = createRequire(import.meta.url)('playwright');
 const evidence = new URL('../local/window-surface/', import.meta.url);
 mkdirSync(evidence, { recursive: true });
-const server = await createServer({ server: { port: 1424, strictPort: true } });
+const server = await createServer({ server: { port: 1428, strictPort: true } });
 let browser;
 try {
   await server.listen();
@@ -15,30 +15,32 @@ try {
   for (const theme of ['light', 'dark']) for (const scale of [1, 1.25, 1.5, 1.75, 2]) {
     const page = await browser.newPage({ colorScheme: theme, deviceScaleFactor: scale, reducedMotion: 'reduce', locale: 'ko-KR', viewport: { width: 1000, height: 850 } });
     for (const screen of ['home', 'selected', 'manual', 'failure']) {
-      await page.goto(`http://127.0.0.1:1424/?screen=${screen}`);
+      await page.goto(`http://127.0.0.1:1428/?screen=${screen}`);
       await page.locator('.app-window').waitFor();
-      await page.addStyleTag({ content: '.web-preview { background: transparent !important; }' });
+      await page.addStyleTag({ content: '.web-preview { background: transparent !important; justify-content: flex-start; }' });
       const image = await page.locator('#app').screenshot({ omitBackground: true });
       if (screen === 'home') await sharp(image).png().toFile(new URL(`${theme}-${scale}-window.png`, evidence).pathname.replace(/^\/(\w:)/, '$1'));
       const { data, info } = await sharp(image).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-      // Inspect pixel areas wholly outside the rounded outline. Pixels crossing
-      // the curve legitimately mix the stroke and fill through antialiasing.
-      let checked = 0;
-      for (let y = 0; y < info.height; y++) for (let x = 0; x < info.width; x++) {
-        const px = (x + .5) / scale - 4, py = (y + .5) / scale - 4;
-        const cx = px < 12 ? 12 : px > 363 ? 363 : null;
-        const cy = py < 12 ? 12 : py > 488 ? 488 : null;
-        if (cx === null || cy === null) continue;
-        const nearX = Math.max(x / scale - 4, Math.min(cx, (x + 1) / scale - 4));
-        const nearY = Math.max(y / scale - 4, Math.min(cy, (y + 1) / scale - 4));
-        if (Math.hypot(nearX - cx, nearY - cy) <= 12.05) continue;
-        const offset = (y * info.width + x) * 4;
-        // Unpremultiplying a low-alpha PNG edge magnifies 8-bit rounding.
-        const pigmentTolerance = 2 + Math.ceil(255 / Math.max(1, data[offset + 3]));
-        assert(data[offset + 3] <= 20 || Math.abs(data[offset] - 56) <= pigmentTolerance, `${theme} ${scale} ${screen}: fill beyond the corner stroke at ${px},${py}: ${[...data.subarray(offset, offset + 4)]}`);
-        checked++;
+      // The webview is an opaque rectangle. Only DWM rounds the actual HWND.
+      assert.equal(info.width, Math.round(375 * scale));
+      assert.equal(info.height, Math.round(500 * scale));
+      const geometry = await page.locator('#app').evaluate(app => {
+        const frame = app.querySelector('.app-window'), surface=app.querySelector('.app-surface');
+        const box = node => {const r=node.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};};
+        const css=getComputedStyle(frame),padding=getComputedStyle(app).padding;
+        return {app:box(app),frame:box(frame),surface:box(surface),padding,border:css.borderWidth,radius:css.borderRadius,shadow:css.boxShadow};
+      });
+      assert.equal(geometry.padding,'0px');assert.equal(geometry.border,'0px');
+      assert.equal(geometry.radius,'0px');assert.equal(geometry.shadow,'none');
+      assert.deepEqual(geometry.frame,geometry.app);assert.deepEqual(geometry.surface,geometry.app);
+      for(const [x,y] of [[1,1],[info.width-2,1],[1,info.height-2],[info.width-2,info.height-2]]) {
+        assert.equal(data[(y*info.width+x)*4+3],255,`${theme} ${scale} ${screen}: no transparent fake gutter or CSS-rounded corner`);
       }
-      assert(checked > 4, 'Inspect actual antialiased border pixels');
+      if(await page.locator('.page-scroll').count()) {
+      const track=await page.locator('.page-scroll').first().evaluate(node=>({margin:getComputedStyle(node).marginRight,top:getComputedStyle(node,'::-webkit-scrollbar-track').marginTop,bottom:getComputedStyle(node,'::-webkit-scrollbar-track').marginBottom}));
+      assert.equal(track.margin,'3px');assert.equal(track.bottom,'8px');
+      assert.equal(track.top,screen==='home'||screen==='selected'?'52px':'56px','Preserve existing scrollbar top placement');
+      }
       if (screen === 'manual') {
         const inputs = page.locator('.segments input');
         await inputs.first().fill('19');
@@ -47,7 +49,7 @@ try {
         assert.equal(focused.outline, 'none');
         await page.keyboard.press('Tab');
         assert(await inputs.nth(1).evaluate(node => document.activeElement === node), 'Keyboard focus navigation remains functional');
-        assert.equal(await inputs.first().evaluate(node => getComputedStyle(node).boxShadow), focused.shadow, 'Focus does not add a colored inset border');
+        assert.match(focused.shadow, /0px 0px 0px 1px inset$/, 'Existing focus edge remains inside the input');
       }
       if (screen === 'home') {
         await sharp(image).extract({ left: 0, top: 0, width: Math.ceil(22 * scale), height: Math.ceil(22 * scale) }).resize(352, 352, { kernel: 'nearest' }).png()
@@ -56,5 +58,5 @@ try {
     }
     await page.close();
   }
-  console.log('Window corners: no fill beyond the border at 100/125/150/175/200% in both themes across home/selection/manual/result. Focus, typing and Tab work without a blue outline.');
+  console.log('Native frame web surface: opaque 375×500 without CSS frame/gutter at 100/125/150/175/200% across both themes and home/selection/manual/result; preserved scroll top, 3px right/8px bottom, focus/typing/Tab passed.');
 } finally { await browser?.close(); await server.close(); }

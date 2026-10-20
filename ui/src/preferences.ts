@@ -1,4 +1,5 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { setTranslationLanguage } from './i18n';
 
 export type Language = 'ko' | 'en' | 'ja';
@@ -17,6 +18,8 @@ export let theme: Theme = savedTheme === 'light' || savedTheme === 'dark' ? save
 const systemTheme = matchMedia('(prefers-color-scheme: dark)');
 function applyTheme() {
   document.documentElement.dataset.theme = theme === 'system' ? systemTheme.matches ? 'dark' : 'light' : theme;
+  // Native DWM border follows the same preference as the web content.
+  if (isTauri()) void getCurrentWindow().setTheme(theme === 'system' ? null : theme).catch(() => {});
   window.dispatchEvent(new Event('ltac-theme-change'));
 }
 export async function initializePreferences() {

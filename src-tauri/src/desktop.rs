@@ -38,6 +38,7 @@ pub struct Snapshot {
     wake_verified: bool,
     power: String,
     automatic: bool,
+    keep_tv_on: bool,
     autostart: bool,
     service_mode: bool,
     busy: bool,
@@ -57,6 +58,7 @@ struct Choice {
 #[serde(default)]
 struct Preferences {
     automatic: bool,
+    keep_tv_on: bool,
     shortcut_enabled: bool,
     shortcut: Option<String>,
 }
@@ -64,6 +66,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             automatic: true,
+            keep_tv_on: false,
             shortcut_enabled: false,
             shortcut: None,
         }
@@ -89,7 +92,7 @@ pub struct Desktop {
 
 #[derive(Default)]
 struct EventRoute {
-    watcher: Option<tokio::sync::mpsc::UnboundedSender<Notice>>,
+    watcher: Option<ltac::sync::NoticeSender>,
     display: Option<Event>,
 }
 
@@ -148,6 +151,10 @@ fn save_preferences(config: &Path, automatic: bool) -> Result<()> {
         .and_then(|data| serde_json::from_slice(&data).ok())
         .unwrap_or_default();
     preferences.automatic = automatic;
+    write_preferences(config, &preferences)
+}
+fn write_preferences(config: &Path, preferences: &Preferences) -> Result<()> {
+    let path = preferences_path(config);
     let mut file =
         tempfile::NamedTempFile::new_in(path.parent().context("No settings directory")?)?;
     file.write_all(&serde_json::to_vec_pretty(&preferences)?)?;
@@ -191,6 +198,7 @@ fn initial_view(
         wake_verified: false,
         power: "unknown".into(),
         automatic: preferences.automatic,
+        keep_tv_on: preferences.keep_tv_on,
         autostart,
         service_mode,
         busy: false,
@@ -286,6 +294,10 @@ async fn pause_devices(state: &Desktop) -> Result<()> {
 }
 
 async fn configure_service(state: &Desktop, enabled: bool) -> Result<()> {
+    ltac::service_ipc::request(ltac::service_ipc::Request::KeepTvOn {
+        enabled: read(state).map_err(anyhow::Error::msg)?.keep_tv_on,
+    })
+    .await?;
     let devices = ui::configs(&state.path)?
         .iter()
         .map(Config::for_service)
@@ -294,6 +306,14 @@ async fn configure_service(state: &Desktop, enabled: bool) -> Result<()> {
     ltac::service_ipc::request(ltac::service_ipc::Request::Automatic { enabled }).await?;
     Ok(())
 }
+
+fn next_initial(initial: &mut Option<Initial>) -> Option<Initial> {
+    initial.as_mut().map(|initial| Initial {
+        target: initial.target,
+        session: initial.session.take(),
+    })
+}
+
 async fn start_watcher(
     state: &Desktop,
     app: &tauri::AppHandle,
@@ -304,6 +324,7 @@ async fn start_watcher(
         "Windows service owns automatic synchronization"
     );
     anyhow::ensure!(!ltac::lifecycle::is_ending(), "Windows session is ending");
+    let keep_tv_on = read(state).map_err(anyhow::Error::msg)?.keep_tv_on;
     let configs = ui::configs(&state.path)?;
     anyhow::ensure!(!configs.is_empty(), "연결된 기기가 없어요.");
     for config in &configs {
@@ -317,7 +338,7 @@ async fn start_watcher(
     let view = state.view.clone();
     let handle = app.clone();
     let path = state.path.clone();
-    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (sender, receiver) = ltac::sync::notice_channel();
     {
         let mut route = state
             .events
@@ -326,6 +347,7 @@ async fn start_watcher(
         route.watcher = Some(sender.clone());
         if let Some(event) = route.display {
             let _ = sender.send(Notice {
+                preceding: None,
                 event,
                 suspend_ack: None,
             });
@@ -337,12 +359,20 @@ async fn start_watcher(
         let mut senders = Vec::new();
         let mut initial = initial;
         for config in configs {
-            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+            let (sender, receiver) = ltac::sync::notice_channel();
             senders.push(sender);
             let mut journal = journal.clone();
-            let initial = initial.take();
+            let initial = next_initial(&mut initial);
             tasks.spawn(async move {
-                ltac::sync::run_with_initial(&config, &mut journal, receiver, false, initial).await
+                ltac::sync::run_with_policy(
+                    &config,
+                    &mut journal,
+                    receiver,
+                    false,
+                    initial,
+                    keep_tv_on,
+                )
+                .await
             });
         }
         let result: Result<()> = async {
@@ -356,7 +386,7 @@ async fn start_watcher(
                                 let (ack, receiver) = std::sync::mpsc::sync_channel(1);
                                 acknowledgements.push(receiver); ack
                             });
-                            let _ = sender.send(Notice { event: notice.event, suspend_ack });
+                            let _ = sender.send(Notice { preceding: notice.preceding, event: notice.event, suspend_ack });
                         }
                         if let Some(ack) = notice.suspend_ack {
                             tokio::task::spawn_blocking(move || {
@@ -712,6 +742,10 @@ async fn pair_tv(
                 if let Some(mac) = parsed_mac {
                     config.mac = Some(mac);
                 }
+                // Without a simple one-TV mapping, leave the new TV for manual HDMI selection.
+                if !saved_devices.is_empty() {
+                    config.apply_hdmi_detection(None);
+                }
                 ui::remember(&state.path, &config)?;
                 config.source_path = Some(state.path.clone());
                 config.save(&state.path)?;
@@ -823,17 +857,21 @@ fn show(app: &tauri::AppHandle) {
 }
 
 fn apply_service(state: &Desktop, app: &tauri::AppHandle, remote: ltac::service_ipc::Snapshot) {
-    update(&state.view, app, |s| {
-        s.power = remote.power;
-        if s.configured {
-            s.automatic = remote.automatic;
-        }
-        s.busy = remote.busy;
-        s.checked_at = remote.checked_at;
-        s.error = remote.error.map(|_| {
-            "전원 서비스가 요청을 완료하지 못했어요. TV와 네트워크를 확인해 주세요.".into()
-        });
-    });
+    update(&state.view, app, |s| apply_service_snapshot(s, remote));
+}
+
+fn apply_service_snapshot(s: &mut Snapshot, remote: ltac::service_ipc::Snapshot) {
+    s.power = remote.power;
+    // The saved desktop preference owns input protection. Subscription frames
+    // can precede startup configuration or arrive after a newer command.
+    if s.configured {
+        s.automatic = remote.automatic;
+    }
+    s.busy = remote.busy;
+    s.checked_at = remote.checked_at;
+    s.error = remote
+        .error
+        .map(|_| "전원 서비스가 요청을 완료하지 못했어요. TV와 네트워크를 확인해 주세요.".into());
 }
 
 async fn service_request(
@@ -878,12 +916,13 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     let observer_view = view.clone();
     let observer_app = app.handle().clone();
     let mut journal = Journal::open(&directory.join("events.jsonl"))?
+        .best_effort()
         .with_observer(move |event, data| observe(&observer_view, &observer_app, event, data));
     journal.record(
         "desktop_started",
         json!({"automatic":view.read().map(|s|s.automatic).unwrap_or(false)}),
     )?;
-    let (native_sender, mut native_events) = tokio::sync::mpsc::unbounded_channel();
+    let (native_sender, mut native_events) = ltac::sync::notice_channel();
     // Register once for the entire desktop lifetime, including manual commands
     // and intervals where automatic synchronization is disabled.
     // The desktop also needs interactive resume for a one-shot sleep shortcut
@@ -946,15 +985,45 @@ fn setup(app: &mut tauri::App) -> Result<()> {
         });
     }
 
+    let (topology_sender, mut topology_events) = tokio::sync::watch::channel(0u64);
+    let topology_app = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        while topology_events.changed().await.is_ok() {
+            let app = topology_app.clone();
+            let state = app.state::<Desktop>();
+            let _operation = state.operation.lock().await;
+            topology_events.borrow_and_update();
+            if ltac::lifecycle::is_ending() {
+                return;
+            }
+            let result: Result<()> = async {
+                if ui::refresh_pc_inputs(&state.path, &state.journal)? {
+                    let automatic = read(&state).map_err(anyhow::Error::msg)?.automatic;
+                    if !state.service_mode {
+                        stop_watcher(&state).await;
+                    }
+                    ui::publish_hdmi_config(&state, &app, automatic).await?;
+                }
+                ui::refresh_devices(&state, &app)
+            }
+            .await;
+            if let Err(error) = result {
+                fail(&state, &app, &format!("HDMI: {error:#}"));
+            }
+        }
+    });
     let handle = app.handle().clone();
     tauri::async_runtime::spawn(async move {
         while let Some(notice) = native_events.recv().await {
             let state = handle.state::<Desktop>();
-            if notice.event == Event::ResumeInteractive
-                && state
-                    .shortcut_sleep
-                    .swap(false, std::sync::atomic::Ordering::AcqRel)
-            {
+            if notice.event == Event::DisplayTopologyChanged {
+                topology_sender.send_modify(|generation| *generation = generation.wrapping_add(1));
+            }
+            if ui::take_shortcut_resume(
+                notice.event,
+                &state.shortcut_sleep,
+                read(&state).is_ok_and(|s| s.automatic),
+            ) {
                 let app = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     let state = app.state::<Desktop>();
@@ -987,8 +1056,22 @@ fn setup(app: &mut tauri::App) -> Result<()> {
                     && read(&state).is_ok_and(|s| s.automatic)
                 {
                     let result = tokio::time::timeout(Duration::from_millis(1400), async {
-                        let config = Config::load(&state.path)?;
-                        controller::off(&config, &mut state.journal.clone()).await
+                        let keep_tv_on = read(&state).map_err(anyhow::Error::msg)?.keep_tv_on;
+                        let mut tasks = tokio::task::JoinSet::new();
+                        for config in ui::configs(&state.path)? {
+                            let mut journal = state.journal.clone();
+                            tasks.spawn(async move {
+                                if keep_tv_on {
+                                    controller::off_protected(&config, &mut journal).await
+                                } else {
+                                    controller::off(&config, &mut journal).await
+                                }
+                            });
+                        }
+                        while let Some(result) = tasks.join_next().await {
+                            result??;
+                        }
+                        Ok::<_, anyhow::Error>(())
                     })
                     .await;
                     let _ = state.journal.clone().record(
@@ -1206,8 +1289,10 @@ pub fn run() -> Result<()> {
             discover_tvs,
             cancel_connection,
             ui::edit_device,
+            ui::set_device_hdmi,
             ui::remove_device,
             ui::set_shortcut,
+            ui::set_keep_tv_on,
             crate::updater::update_status,
             crate::updater::check_for_updates_manual
         ])
@@ -1219,12 +1304,75 @@ pub fn run() -> Result<()> {
 mod startup_tests {
     use super::*;
 
+    #[test]
+    fn shortcut_off_intention_is_retained_for_every_watcher() {
+        let mut initial = Some(Initial {
+            target: ltac::sync::Target::Off,
+            session: None,
+        });
+        for _ in 0..16 {
+            assert_eq!(
+                next_initial(&mut initial).unwrap().target,
+                ltac::sync::Target::Off
+            );
+        }
+        assert!(next_initial(&mut None).is_none());
+    }
+
+    #[test]
+    fn service_status_cannot_reset_saved_input_protection() {
+        for enabled in [true, false] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("config.json");
+            let prefs = Preferences {
+                keep_tv_on: enabled,
+                ..Default::default()
+            };
+            write_preferences(&path, &prefs).unwrap();
+            let (mut view, _) = initial_view(&path, true, true).unwrap();
+            // Subscription can deliver an old policy before configuration or
+            // after a newer command response. Neither changes user intent.
+            for power in ["unknown", "on", "standby"] {
+                apply_service_snapshot(
+                    &mut view,
+                    ltac::service_ipc::Snapshot {
+                        power: power.into(),
+                        automatic: false,
+                        keep_tv_on: !enabled,
+                        busy: false,
+                        checked_at: Some(123),
+                        error: None,
+                    },
+                );
+                assert_eq!(view.keep_tv_on, enabled);
+                assert_eq!(view.power, power);
+                assert_eq!(view.checked_at, Some(123));
+            }
+            // Another preference change must persist the selected protection.
+            write_preferences(
+                &path,
+                &Preferences {
+                    automatic: view.automatic,
+                    keep_tv_on: view.keep_tv_on,
+                    shortcut_enabled: true,
+                    shortcut: Some("F8".into()),
+                },
+            )
+            .unwrap();
+            let (reopened, _) = initial_view(&path, true, true).unwrap();
+            assert_eq!(reopened.keep_tv_on, enabled);
+            assert!(reopened.shortcut_enabled);
+        }
+    }
+
     fn config(paired: bool) -> Config {
         Config {
             ip: "192.0.2.1".parse().unwrap(),
             mac: None,
             device: None,
             wake_verified: false,
+            pc_hdmi: None,
+            pc_hdmi_source: Default::default(),
             source_path: None,
             // Opaque sentinel: startup tests never decrypt a key or contact a TV.
             protected_key: paired.then(|| vec![1]),

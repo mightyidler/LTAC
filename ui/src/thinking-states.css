@@ -1,0 +1,14 @@
+/* Adapt the Thinking states recipe to measured, content-sized buttons.
+   The existing sizing code freezes each copy rather than using a longest-line sizer. */
+.shortcut-button {
+  --think-swap: var(--duration-quick);
+  --think-gap: 50ms;
+  --think-distance: var(--distance-base);
+  --think-blur: var(--blur-small);
+  --think-ease: var(--ease-in-out);
+  --think-base: var(--text-on-primary-muted);
+  --think-highlight: var(--button-primary-text);
+}
+.shortcut-button > .t-think-text:not(.shortcut-copy-outgoing) { position: relative; inset: auto; }
+.shortcut-button > .t-think-text:not([data-text]) { color: inherit; }
+.shortcut-button > .t-think-text:not([data-text])::before { display: none; }

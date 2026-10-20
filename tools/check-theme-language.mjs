@@ -4,18 +4,18 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { createServer } from 'vite';
 import sharp from 'sharp';
 const { chromium } = createRequire(import.meta.url)('playwright');
-const evidence = new URL('../docs/evidence/theme-language/', import.meta.url);
+const evidence = new URL('../local/test-results/theme-language/', import.meta.url);
 mkdirSync(evidence, { recursive: true });
 let server, browser;
 const errors = [];
-const typography = JSON.parse(readFileSync(new URL('../ui/src/typography.json', import.meta.url), 'utf8'));
+const typography = JSON.parse(readFileSync(new URL('../tests/fixtures/typography.json', import.meta.url), 'utf8'));
 assert(typography.entries.every(entry => entry.weight === entry.originalWeight - 100), 'Apply exactly one correction to raw JSON weights');
 async function checkTypography(page) {
   await page.waitForFunction(() => getComputedStyle(document.documentElement).fontWeight === (document.documentElement.dataset.theme === 'light' ? '400' : '300'));
   const mismatches = await page.evaluate(entries => entries.flatMap(entry => [...document.querySelectorAll(entry.selector)].flatMap(node => {
     if (node.closest('.t-page[inert]') || !node.getClientRects().length) return [];
     const actual = getComputedStyle(node).fontWeight;
-    const expected = entry.weight + (document.documentElement.dataset.theme === 'light' ? 100 : 0);
+    const expected = node.classList.contains('is-thinking') ? 500 : entry.weight + (document.documentElement.dataset.theme === 'light' ? 100 : 0);
     return actual === String(expected) ? [] : [{ selector: entry.selector, original: entry.originalWeight, expected, actual }];
   })), typography.entries);
   assert.deepEqual(mismatches, [], 'Rendered weights use JSON minus 100, with one +100 correction only in light mode');
@@ -159,19 +159,19 @@ try {
       await page.locator('.t-page:not([inert]) .more-button').first().click();
       const menuOverflow = await page.locator('.t-page:not([inert]) [data-open=true] [role=menuitem]').evaluateAll(nodes => nodes.filter(node => node.scrollWidth > node.clientWidth + 1).map(node => node.textContent));
       assert.deepEqual(menuOverflow, []);
-      const menuGeometry = await page.locator('.t-page:not([inert]) .device-menu[data-open=true]').evaluate(node => {
+      const menuGeometry = await page.locator('.t-page:not([inert]) .device-menu:not(.hdmi-menu)[data-open=true]').evaluate(node => {
         const panel = getComputedStyle(node), content = getComputedStyle(node.querySelector('.t-morph-menu'));
         const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1; const ctx = canvas.getContext('2d');
         ctx.fillStyle = panel.getPropertyValue('--shadow-menu').trim(); ctx.fillRect(0,0,1,1);
         return { radius: panel.borderRadius, width: node.offsetWidth, height: node.offsetHeight, blur: panel.backdropFilter, padding: content.padding, gap: content.gap, shadow: panel.boxShadow, shadowRgba: [...ctx.getImageData(0,0,1,1).data], rows: [...node.querySelectorAll('[role=menuitem]')].map(item => { const css = getComputedStyle(item); return { radius: css.borderRadius, padding: css.padding, gap: css.gap, align: css.justifyContent, height: item.offsetHeight }; }) };
       });
-      assert.equal(menuGeometry.radius, '23px'); assert.equal(menuGeometry.height, 80);
+      assert.equal(menuGeometry.radius, '23px'); assert.equal(menuGeometry.height, 84);
       assert.equal(menuGeometry.width, 140, 'All locales use the same 140px minimum');
-      assert.equal(menuGeometry.padding, '4px'); assert.equal(menuGeometry.gap, '0px'); assert.equal(menuGeometry.blur, 'blur(24px)');
+      assert.equal(menuGeometry.padding, '4px'); assert.equal(menuGeometry.gap, '4px'); assert.equal(menuGeometry.blur, 'blur(24px)');
       assert(menuGeometry.shadow.includes('0px 4px 8px'), 'Menu drop shadow uses the supplied offset and radius');
       assert.deepEqual(menuGeometry.shadowRgba, [0,0,0, theme === 'light' ? 10 : 20], 'Light shadow #0000000A; retain dark shadow color');
       for (const row of menuGeometry.rows) assert.deepEqual(row, { radius: '18px', padding: '10px', gap: '8px', align: 'flex-start', height: 36 });
-      const menuColors = await page.locator('.t-page:not([inert]) .device-menu[data-open=true]').evaluate(node => {
+      const menuColors = await page.locator('.t-page:not([inert]) .device-menu:not(.hdmi-menu)[data-open=true]').evaluate(node => {
         const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1; const ctx = canvas.getContext('2d');
         ctx.fillStyle = getComputedStyle(node).backgroundColor; ctx.fillRect(0,0,1,1);
         return { rgba: [...ctx.getImageData(0,0,1,1).data], text: getComputedStyle(node.querySelector('[role=menuitem]')).color, weight: getComputedStyle(node.querySelector('[role=menuitem]')).fontWeight };
@@ -182,11 +182,11 @@ try {
       await checkTypography(page);
       await page.locator('#app').screenshot({ path: new URL(`${expected}-${theme}-menu.png`, evidence).pathname.replace(/^\/(\w:)/, '$1') });
       await page.keyboard.press('Escape');
-      const editLabel = page.locator('.t-page:not([inert]) .device-menu').first().locator('[data-action=edit] span');
+      const editLabel = page.locator('.t-page:not([inert]) .device-menu:not(.hdmi-menu)').first().locator('[data-action=edit] span');
       const originalLabel = await editLabel.textContent();
       await editLabel.evaluate(node => node.textContent = 'Long menu action for width sizing');
       await page.locator('.t-page:not([inert]) .more-button').first().click();
-      const expandedMenu = await page.locator('.t-page:not([inert]) .device-menu[data-open=true]').evaluate(node => {
+      const expandedMenu = await page.locator('.t-page:not([inert]) .device-menu:not(.hdmi-menu)[data-open=true]').evaluate(node => {
         const item = node.querySelector('[data-action=edit]'), text = item.querySelector('span'), icon = item.querySelector('svg');
         return { width: node.offsetWidth, overflow: item.scrollWidth > item.clientWidth, iconInset: icon.getBoundingClientRect().left - item.getBoundingClientRect().left, textEnd: text.getBoundingClientRect().right, rowEnd: item.getBoundingClientRect().right };
       });
@@ -251,13 +251,14 @@ try {
     for (const text of ['확인 중', '업데이트 진행 중']) {
       await page.waitForFunction(text => {
         const node = document.querySelector('#check-update > .t-text-swap:not(.shortcut-copy-outgoing)');
-        return node?.textContent === text && node.classList.contains('t-shimmer');
+        return node?.textContent === text && node.classList.contains('is-thinking');
       }, text);
       const live = page.locator('#check-update > .t-text-swap:not(.shortcut-copy-outgoing)');
       assert.equal(await live.getAttribute('data-text'), text, 'Shimmer mask always matches the displayed status');
-      const effect = await live.evaluate(node => ({ animation: getComputedStyle(node, '::before').animationName, font: getComputedStyle(node).fontWeight, position: getComputedStyle(node, '::before').backgroundPosition }));
-      assert.equal(effect.animation, reducedMotion === 'reduce' ? 'none' : 't-shimmer');
-      assert.equal(effect.font, colorScheme === 'light' ? '500' : '400');
+      const effect = await live.evaluate(node => ({ animation: getComputedStyle(node, '::before').animationName, display: getComputedStyle(node, '::before').display, font: getComputedStyle(node).fontWeight, position: getComputedStyle(node, '::before').backgroundPosition }));
+      assert.equal(effect.animation, 't-think-shimmer');
+      if (reducedMotion === 'reduce') assert.equal(effect.display, 'none');
+      assert.equal(effect.font, '500');
       assert.equal(await page.locator('#check-update').getAttribute('aria-busy'), 'true');
       if (text === '확인 중' && reducedMotion === 'no-preference') {
         await page.waitForTimeout(100);
@@ -266,14 +267,14 @@ try {
     }
     await page.waitForFunction(() => {
       const node = document.querySelector('#check-update > .t-text-swap:not(.shortcut-copy-outgoing)');
-      return node?.textContent === '업데이트 완료' && !node.classList.contains('t-shimmer') && !node.hasAttribute('data-text');
+      return node?.textContent === '업데이트 완료' && !node.classList.contains('is-thinking') && !node.hasAttribute('data-text');
     });
-    await page.waitForFunction(() => document.querySelectorAll('.t-shimmer').length === 0);
-    assert.equal(await page.locator('.t-shimmer').count(), 0, 'Completion also removes any outgoing shimmer copy');
+    await page.waitForFunction(() => document.querySelectorAll('.is-thinking').length === 0);
+    assert.equal(await page.locator('.is-thinking').count(), 0, 'Completion also removes any outgoing shimmer copy');
     await context.close();
   }
   assert.deepEqual(errors, []);
   // Prevent new literal colors from bypassing the token hierarchy.
-  for (const name of ['style.css','motion.css','preview.css']) assert(!/#[\da-f]{3,8}\b|rgba?\(/i.test(readFileSync(new URL(`../ui/src/${name}`, import.meta.url), 'utf8')), `${name} has a literal color`);
-  console.log('Language/theme: KO/EN/JA, unsupported locale fallback, live system changes, overrides, persistence, keyboard navigation, all screen layouts, token references, exact greens and WebGL ribbon contrast passed. Screenshots: docs/evidence/theme-language/.');
+  for (const name of ['src/style.css','src/motion.css','dev/preview.css']) assert(!/#[\da-f]{3,8}\b|rgba?\(/i.test(readFileSync(new URL(`../ui/${name}`, import.meta.url), 'utf8')), `${name} has a literal color`);
+  console.log('Language/theme: KO/EN/JA, unsupported locale fallback, live system changes, overrides, persistence, keyboard navigation, all screen layouts, token references, exact greens and WebGL ribbon contrast passed. Screenshots: local/test-results/theme-language/.');
 } finally { await browser?.close(); await server?.close(); }

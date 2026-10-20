@@ -1,7 +1,3 @@
 #!/bin/sh
-# Also reject forced additions that bypass .gitignore; never print file contents.
-blocked=$(git diff --cached --name-only --diff-filter=ACMR | grep -Ei '(^|/)(\.env($|\.)|\.secrets/|\.credentials/)|\.(env($|\.)|key$|pem$|p12$|pfx$|secret$|secrets\.)' || true)
-if [ -n "$blocked" ]; then
-  printf '%s\n' 'Commit blocked: local environment or credential files are staged.' "$blocked" >&2
-  exit 1
-fi
+# Inspect staged bytes, including files force-added past .gitignore.
+exec node tools/check-repository.mjs --staged

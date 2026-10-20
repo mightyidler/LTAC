@@ -12,6 +12,7 @@ use tokio_tungstenite::{
 
 pub const POWER_STATE: &str = "ssap://com.webos.service.tvpower/power/getPowerState";
 pub const POWER_OFF: &str = "ssap://system/turnOff";
+pub const FOREGROUND_APP: &str = "ssap://com.webos.applicationManager/getForegroundAppInfo";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
@@ -67,6 +68,7 @@ impl PowerState {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OffEvidence {
+    SkippedInput,
     AlreadyReportedStandby,
     Acknowledged,
     ConnectionClosedAfterSend,
@@ -171,12 +173,13 @@ impl Session {
             // Recent webOS versions require this pre-registration request. A TV
             // denial is optional; a broken connection or timeout is not ignored.
             match self.request("ssap://system/getSystemInfo").await {
-                Ok(_) | Err(Error::Rejected { .. }) => {},
+                Ok(_) => {},
+                Err(Error::Rejected { .. }) => {},
                 Err(e) => return Err(e),
             }
             let mut payload = json!({"forcePairing":false, "pairingType":"PROMPT", "manifest":{
                 "manifestVersion":1, "appVersion":env!("CARGO_PKG_VERSION"),
-                "permissions":["CONTROL_POWER", "READ_POWER_STATE", "READ_NETWORK_STATE"]
+                "permissions":["CONTROL_POWER", "READ_POWER_STATE", "READ_NETWORK_STATE", "READ_RUNNING_APPS"]
             }});
             if let Some(key) = key { payload["client-key"] = key.into(); }
             self.send(json!({"type":"register", "id":"register", "payload":payload})).await?;
@@ -254,6 +257,20 @@ impl Session {
     }
     pub async fn power_state(&mut self) -> Result<PowerState> {
         Ok(PowerState::from_payload(&self.request(POWER_STATE).await?))
+    }
+    pub async fn foreground_app(&mut self) -> Result<String> {
+        let payload = self.request(FOREGROUND_APP).await?;
+        if payload["returnValue"] != true {
+            return Err(Error::Protocol(
+                "Foreground app response did not report success",
+            ));
+        }
+        payload
+            .get("appId")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+            .ok_or(Error::Protocol("Missing foreground app ID"))
     }
     /// Wait for incoming traffic without polling, replying to server pings.
     /// The watcher retains its authenticated socket for a prompt suspend OFF.
@@ -494,6 +511,13 @@ pub(crate) mod tests {
             handshake_prefix(&mut server).await;
             let register = receive(&mut server).await;
             assert_eq!(register["payload"]["client-key"], "saved-key");
+            assert!(
+                register["payload"]["manifest"]["permissions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|permission| permission == "READ_RUNNING_APPS")
+            );
             send(
                 &mut server,
                 json!({"id":"register", "type":"registered", "payload":{"client-key":"saved-key"}}),

@@ -7,6 +7,7 @@ pub(super) struct SavedDevice {
     name: String,
     ip: String,
     mac: Option<String>,
+    pc_hdmi: Option<u8>,
 }
 
 pub(super) fn configs(path: &Path) -> Result<Vec<Config>> {
@@ -40,7 +41,13 @@ pub(super) fn remember(path: &Path, config: &Config) -> Result<()> {
             || (previous.device.is_some()
                 && previous.device.as_ref().map(|d| &d.id) == config.device.as_ref().map(|d| &d.id))
     }) {
-        return config.save(
+        let mut updated = config.clone();
+        // Re-pairing cannot discard a previously selected PC input.
+        if previous.hdmi_selection_pinned() || updated.pc_hdmi.is_none() {
+            updated.pc_hdmi = previous.pc_hdmi;
+            updated.pc_hdmi_source = previous.pc_hdmi_source;
+        }
+        return updated.save(
             previous
                 .source_path
                 .as_ref()
@@ -82,6 +89,7 @@ pub(super) fn devices(path: &Path) -> Result<Vec<SavedDevice>> {
                     .unwrap_or_else(|| config.ip.to_string()),
                 ip: config.ip.to_string(),
                 mac: config.mac.map(|m| m.to_string()),
+                pc_hdmi: config.pc_hdmi,
             })
         })
         .collect()
@@ -94,6 +102,124 @@ pub(super) fn refresh_devices(state: &Desktop, app: &tauri::AppHandle) -> Result
         s.devices = devices;
     });
     Ok(())
+}
+
+struct HdmiChange {
+    device: Config,
+    legacy: Option<Config>,
+}
+
+impl HdmiChange {
+    fn restore(&self, path: &Path) -> Result<()> {
+        self.device.save(
+            self.device
+                .source_path
+                .as_deref()
+                .context("Missing device path")?,
+        )?;
+        if let Some(legacy) = &self.legacy {
+            legacy.save(path)?;
+        }
+        Ok(())
+    }
+}
+
+fn save_device_hdmi(path: &Path, id: &str, port: u8) -> Result<HdmiChange> {
+    anyhow::ensure!(
+        (1..=4).contains(&port),
+        "HDMI 번호는 1~4 중에서 선택해주세요."
+    );
+    let device = configs(path)?
+        .into_iter()
+        .find(|config| {
+            config
+                .source_path
+                .as_ref()
+                .and_then(|p| p.file_stem())
+                .is_some_and(|stem| stem == id)
+        })
+        .context("기기를 찾을 수 없어요.")?;
+    let legacy = Config::load(path)
+        .ok()
+        .filter(|active| active.ip == device.ip);
+    let change = HdmiChange { device, legacy };
+    let mut updated = change.device.clone();
+    updated.set_manual_hdmi(port);
+    updated.save(
+        updated
+            .source_path
+            .as_deref()
+            .context("Missing device path")?,
+    )?;
+    if let Some(legacy) = &change.legacy {
+        let mut updated = legacy.clone();
+        updated.set_manual_hdmi(port);
+        if let Err(error) = updated.save(path) {
+            change.restore(path)?;
+            return Err(error);
+        }
+    }
+    Ok(change)
+}
+
+pub(super) async fn publish_hdmi_config(
+    state: &Desktop,
+    app: &tauri::AppHandle,
+    automatic: bool,
+) -> Result<()> {
+    if state.service_mode {
+        let devices = configs(&state.path)?
+            .iter()
+            .map(Config::for_service)
+            .collect::<Result<Vec<_>>>()?;
+        let remote =
+            ltac::service_ipc::request(ltac::service_ipc::Request::Configure { devices }).await?;
+        apply_service(state, app, remote);
+    } else if automatic && read(state).map_err(anyhow::Error::msg)?.configured {
+        start_watcher(state, app, None).await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(super) async fn set_device_hdmi(
+    state: State<'_, Desktop>,
+    app: tauri::AppHandle,
+    id: String,
+    pc_hdmi: u8,
+) -> std::result::Result<Snapshot, String> {
+    let _operation = state
+        .operation
+        .try_lock()
+        .map_err(|_| "다른 작업을 처리 중입니다.")?;
+    let result: Result<()> = async {
+        let automatic = read(&state).map_err(anyhow::Error::msg)?.automatic;
+        // Validate and persist only the selected TV. Existing automatic policy
+        // and other preferences are not changed by an input selection.
+        let change = save_device_hdmi(&state.path, &id, pc_hdmi)?;
+        if !state.service_mode {
+            stop_watcher(&state).await;
+        }
+        if let Err(error) = publish_hdmi_config(&state, &app, automatic).await {
+            change.restore(&state.path)?;
+            if !state.service_mode {
+                stop_watcher(&state).await;
+            }
+            if let Err(restore_error) = publish_hdmi_config(&state, &app, automatic).await {
+                return Err(error.context(format!("HDMI rollback failed: {restore_error:#}")));
+            }
+            return Err(error);
+        }
+        refresh_devices(&state, &app)?;
+        update(&state.view, &app, |s| s.error = None);
+        Ok(())
+    }
+    .await;
+    if let Err(error) = result {
+        let _ = refresh_devices(&state, &app);
+        fail(&state, &app, &format!("HDMI selection: {error:#}"));
+    }
+    read(&state)
 }
 
 #[tauri::command]
@@ -217,19 +343,31 @@ type HotkeyRequest = (
     mpsc::SyncSender<std::result::Result<(), String>>,
 );
 pub(super) struct Hotkey {
-    sender: mpsc::Sender<HotkeyRequest>,
+    sender: mpsc::SyncSender<HotkeyRequest>,
+    thread_id: u32,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 impl Hotkey {
     pub(super) fn start(app: tauri::AppHandle) -> Self {
-        let (sender, receiver) = mpsc::channel::<HotkeyRequest>();
-        std::thread::spawn(move || {
+        let (sender, receiver) = mpsc::sync_channel::<HotkeyRequest>(1);
+        let (ready, started) = mpsc::sync_channel(1);
+        let thread = std::thread::spawn(move || {
             use windows_sys::Win32::UI::{
                 Input::KeyboardAndMouse::{MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey},
-                WindowsAndMessaging::{MSG, PM_REMOVE, PeekMessageW, WM_HOTKEY},
+                WindowsAndMessaging::{GetMessageW, MSG, PM_NOREMOVE, PeekMessageW, WM_HOTKEY},
             };
+            let mut message: MSG = unsafe { std::mem::zeroed() };
+            unsafe {
+                PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_NOREMOVE);
+            }
+            let _ =
+                ready.send(unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() });
             let mut active = false;
             let mut previous: Option<(u32, u32)> = None;
-            while !ltac::lifecycle::is_ending() {
+            while unsafe { GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) } > 0 {
+                if ltac::lifecycle::is_ending() {
+                    break;
+                }
                 while let Ok((shortcut, reply)) = receiver.try_recv() {
                     let result = shortcut
                         .as_deref()
@@ -271,21 +409,15 @@ impl Hotkey {
                         });
                     let _ = reply.send(result);
                 }
-                let mut message: MSG = unsafe { std::mem::zeroed() };
-                while unsafe { PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) }
-                    != 0
-                {
-                    if message.message == WM_HOTKEY {
-                        let app = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let state = app.state::<Desktop>();
-                            if let Err(error) = sleep_all(&state, &app).await {
-                                fail(&state, &app, &format!("sleep shortcut: {error:#}"));
-                            }
-                        });
-                    }
+                if message.message == WM_HOTKEY && active {
+                    let app = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let state = app.state::<Desktop>();
+                        if let Err(error) = sleep_all(&state, &app).await {
+                            fail(&state, &app, &format!("sleep shortcut: {error:#}"));
+                        }
+                    });
                 }
-                std::thread::sleep(Duration::from_millis(30));
             }
             if active {
                 unsafe {
@@ -293,16 +425,50 @@ impl Hotkey {
                 }
             }
         });
-        Self { sender }
+        let thread_id = started.recv().unwrap_or(0);
+        Self {
+            sender,
+            thread_id,
+            thread: Some(thread),
+        }
     }
     pub(super) fn set(&self, shortcut: Option<String>) -> std::result::Result<(), String> {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
-            .send((shortcut, reply))
+            .try_send((shortcut, reply))
             .map_err(|_| "단축키를 등록하지 못했어요.")?;
+        if self.thread_id == 0
+            || unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
+                    self.thread_id,
+                    windows_sys::Win32::UI::WindowsAndMessaging::WM_APP + 1,
+                    0,
+                    0,
+                )
+            } == 0
+        {
+            return Err("단축키를 등록하지 못했어요.".into());
+        }
         receiver
             .recv_timeout(Duration::from_secs(2))
             .map_err(|_| "단축키 등록 시간이 초과되었어요.")?
+    }
+}
+impl Drop for Hotkey {
+    fn drop(&mut self) {
+        if self.thread_id != 0 {
+            unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
+                    self.thread_id,
+                    windows_sys::Win32::UI::WindowsAndMessaging::WM_QUIT,
+                    0,
+                    0,
+                );
+            }
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 fn parse_shortcut(shortcut: &str) -> std::result::Result<(u32, u32), String> {
@@ -411,6 +577,16 @@ mod shortcut_tests {
     }
 }
 
+pub(super) fn take_shortcut_resume(
+    event: Event,
+    pending: &std::sync::atomic::AtomicBool,
+    automatic: bool,
+) -> bool {
+    event == Event::ResumeInteractive
+        && pending.swap(false, std::sync::atomic::Ordering::AcqRel)
+        && !automatic
+}
+
 async fn sleep_all(state: &Desktop, app: &tauri::AppHandle) -> Result<()> {
     let _operation = state
         .operation
@@ -429,15 +605,22 @@ async fn sleep_all(state: &Desktop, app: &tauri::AppHandle) -> Result<()> {
             if state.service_mode {
                 // Propagate IPC failures, including transport failures that otherwise
                 // only update the UI snapshot.
-                let remote = ltac::service_ipc::request(ltac::service_ipc::Request::Off).await?;
+                let remote = ltac::service_ipc::request(ltac::service_ipc::Request::Sleep).await?;
                 apply_service(state, app, remote);
             } else {
                 stop_watcher(state).await;
                 let all = configs(&state.path)?;
+                let keep_tv_on = read(state).map_err(anyhow::Error::msg)?.keep_tv_on;
                 let mut tasks = tokio::task::JoinSet::new();
                 for config in all {
                     let mut journal = state.journal.clone();
-                    tasks.spawn(async move { controller::off(&config, &mut journal).await });
+                    tasks.spawn(async move {
+                        if keep_tv_on {
+                            controller::off_protected(&config, &mut journal).await
+                        } else {
+                            controller::off(&config, &mut journal).await
+                        }
+                    });
                 }
                 let result = tokio::time::timeout(Duration::from_secs(5), async {
                     while let Some(result) = tasks.join_next().await {
@@ -637,6 +820,98 @@ fn with_sleep_privilege(action: impl FnOnce() -> Result<()>) -> Result<()> {
     Ok(())
 }
 
+/// Called only for an actual change in the active Windows display connections.
+pub(super) fn refresh_pc_inputs(path: &Path, journal: &Journal) -> Result<bool> {
+    let saved = configs(path)?;
+    let detection = if saved.len() == 1 {
+        ltac::hdmi::capture().detect()
+    } else {
+        Err("multiple_tvs_select_hdmi_manually")
+    };
+    let mut changed = false;
+    for mut config in saved {
+        if config.hdmi_selection_pinned() {
+            continue;
+        }
+        let before = config.pc_hdmi;
+        config.apply_hdmi_detection(detection.as_ref().ok().copied());
+        let _ = journal.clone().record(
+            "pc_hdmi_detection",
+            json!({
+                "ip":config.ip,"port":config.pc_hdmi,"reason":detection.as_ref().err()
+            }),
+        );
+        let device_path = config
+            .source_path
+            .as_deref()
+            .context("Missing device path")?;
+        config.save(device_path)?;
+        if Config::load(path).is_ok_and(|active| active.ip == config.ip) {
+            config.save(path)?;
+        }
+        changed |= before != config.pc_hdmi;
+    }
+    Ok(changed)
+}
+
+#[tauri::command]
+pub(super) async fn set_keep_tv_on(
+    state: State<'_, Desktop>,
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> std::result::Result<Snapshot, String> {
+    let _operation = state
+        .operation
+        .try_lock()
+        .map_err(|_| "다른 작업을 처리 중입니다.")?;
+    let previous = read(&state)?;
+    if state.service_mode {
+        let remote = ltac::service_ipc::request(ltac::service_ipc::Request::KeepTvOn { enabled })
+            .await
+            .map_err(|e| e.to_string())?;
+        apply_service(&state, &app, remote);
+    } else {
+        stop_watcher(&state).await;
+    }
+    let prefs = Preferences {
+        automatic: previous.automatic,
+        keep_tv_on: enabled,
+        shortcut_enabled: previous.shortcut_enabled,
+        shortcut: previous.shortcut.clone(),
+    };
+    if let Err(error) = write_preferences(&state.path, &prefs) {
+        if state.service_mode {
+            let _ = service_request(
+                &state,
+                &app,
+                ltac::service_ipc::Request::KeepTvOn {
+                    enabled: previous.keep_tv_on,
+                },
+            )
+            .await;
+        } else if previous.automatic && previous.configured {
+            resume_automatic(&state, &app, true).await;
+        }
+        return Err(error.to_string());
+    }
+    update(&state.view, &app, |s| {
+        s.keep_tv_on = enabled;
+        s.error = None;
+    });
+    if enabled {
+        let _ = refresh_devices(&state, &app);
+        if state.service_mode {
+            configure_service(&state, previous.automatic)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    if !state.service_mode && previous.automatic && previous.configured {
+        resume_automatic(&state, &app, true).await;
+    }
+    read(&state)
+}
+
 #[tauri::command]
 pub(super) async fn set_shortcut(
     state: State<'_, Desktop>,
@@ -655,6 +930,7 @@ pub(super) async fn set_shortcut(
         let path = preferences_path(&state.path);
         let prefs = Preferences {
             automatic: previous.automatic,
+            keep_tv_on: previous.keep_tv_on,
             shortcut_enabled: enabled,
             shortcut: shortcut.clone(),
         };
@@ -690,6 +966,8 @@ mod device_tests {
             mac: None,
             device: None,
             wake_verified: false,
+            pc_hdmi: None,
+            pc_hdmi_source: Default::default(),
             source_path: None,
             protected_key: None,
             certificate_sha256: None,
@@ -697,6 +975,101 @@ mod device_tests {
             transport: ltac::config::Transport::Auto,
         }
     }
+
+    #[test]
+    fn hdmi_selection_persists_per_tv_and_exports_to_service_without_changing_preferences() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let prefs =
+            br#"{"automatic":true,"keep_tv_on":true,"shortcut_enabled":false,"shortcut":null}"#;
+        fs::write(preferences_path(&path), prefs).unwrap();
+        for last in 1..=2 {
+            let mut device = config(last);
+            device.mac = Some(format!("02:00:00:00:00:{last:02X}").parse().unwrap());
+            device.set_key("hdmi-choice-key").unwrap();
+            device.pc_hdmi = Some(last);
+            remember(&path, &device).unwrap();
+            if last == 1 {
+                device.save(&path).unwrap();
+            }
+        }
+        let saved = devices(&path).unwrap();
+        let other_path = configs(&path).unwrap()[1].source_path.clone().unwrap();
+        let other_before = fs::read(&other_path).unwrap();
+        let old_mac = configs(&path).unwrap()[0].mac;
+        save_device_hdmi(&path, &saved[0].id, 4).unwrap();
+        assert_eq!(devices(&path).unwrap()[0].pc_hdmi, Some(4));
+        assert_eq!(Config::load(&path).unwrap().pc_hdmi, Some(4));
+        assert_eq!(fs::read(&other_path).unwrap(), other_before);
+        assert_eq!(fs::read(preferences_path(&path)).unwrap(), prefs);
+        let configs = configs(&path).unwrap();
+        assert_eq!(configs[0].mac, old_mac);
+        assert_eq!(configs[0].key().unwrap(), "hdmi-choice-key");
+        let exported = configs
+            .iter()
+            .map(Config::for_service)
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(
+            exported
+                .iter()
+                .map(|config| config.pc_hdmi)
+                .collect::<Vec<_>>(),
+            vec![Some(4), Some(2)]
+        );
+        assert_eq!(exported[0].key().unwrap(), "hdmi-choice-key");
+        assert_eq!(exported[0].pc_hdmi_source, ltac::hdmi::InputSource::Manual);
+        // Re-pairing without a detected input must retain the manual choice.
+        let mut repaired = configs[0].clone();
+        repaired.pc_hdmi = None;
+        repaired.pc_hdmi_source = ltac::hdmi::InputSource::Automatic;
+        remember(&path, &repaired).unwrap();
+        assert_eq!(devices(&path).unwrap()[0].pc_hdmi, Some(4));
+        assert_eq!(
+            super::configs(&path).unwrap()[0].pc_hdmi_source,
+            ltac::hdmi::InputSource::Manual
+        );
+    }
+
+    #[test]
+    fn invalid_or_missing_hdmi_selection_does_not_modify_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        config(1).save(&path).unwrap();
+        remember(&path, &config(1)).unwrap();
+        let id = devices(&path).unwrap()[0].id.clone();
+        let device_path = configs(&path).unwrap()[0].source_path.clone().unwrap();
+        let before = fs::read(&device_path).unwrap();
+        let legacy = fs::read(&path).unwrap();
+        for port in [0, 5, u8::MAX] {
+            assert!(save_device_hdmi(&path, &id, port).is_err());
+        }
+        assert!(save_device_hdmi(&path, "../../config", 2).is_err());
+        assert_eq!(fs::read(device_path).unwrap(), before);
+        assert_eq!(fs::read(path).unwrap(), legacy);
+    }
+
+    #[test]
+    fn failed_hdmi_application_can_restore_both_device_and_legacy_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let mut first = config(1);
+        first.pc_hdmi = Some(3);
+        first.save(&path).unwrap();
+        remember(&path, &first).unwrap();
+        let id = devices(&path).unwrap()[0].id.clone();
+        let change = save_device_hdmi(&path, &id, 1).unwrap();
+        assert_eq!(devices(&path).unwrap()[0].pc_hdmi, Some(1));
+        change.restore(&path).unwrap();
+        assert_eq!(devices(&path).unwrap()[0].pc_hdmi, Some(3));
+        assert_eq!(Config::load(&path).unwrap().pc_hdmi, Some(3));
+        // The legacy CLI configuration can belong to another TV.
+        config(2).save(&path).unwrap();
+        let other = fs::read(&path).unwrap();
+        save_device_hdmi(&path, &id, 2).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), other);
+    }
+
     #[test]
     fn saved_discovery_matches_identity_after_ip_change_and_manual_ip() {
         let identity = ltac::discovery::DeviceIdentity {
@@ -779,14 +1152,64 @@ mod sleep_tests {
     use std::cell::RefCell;
 
     #[test]
+    fn shortcut_resume_has_one_owner_and_maintenance_wake_does_not_restore() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for automatic in [false, true] {
+            let pending = AtomicBool::new(true);
+            assert!(!take_shortcut_resume(
+                Event::ResumeAutomatic,
+                &pending,
+                automatic
+            ));
+            assert!(pending.load(Ordering::Acquire));
+            assert_eq!(
+                take_shortcut_resume(Event::ResumeInteractive, &pending, automatic),
+                !automatic
+            );
+            assert!(!pending.load(Ordering::Acquire));
+            assert!(!take_shortcut_resume(
+                Event::ResumeInteractive,
+                &pending,
+                automatic
+            ));
+        }
+    }
+
+    #[test]
     fn first_run_and_legacy_preferences_default_to_sync_on() {
         assert!(Preferences::default().automatic);
         assert!(serde_json::from_str::<Preferences>("{}").unwrap().automatic);
+        assert!(!Preferences::default().keep_tv_on);
+        assert!(!Preferences::default().shortcut_enabled);
+        assert!(
+            !serde_json::from_str::<Preferences>(r#"{"automatic":true}"#)
+                .unwrap()
+                .keep_tv_on
+        );
         assert!(
             !serde_json::from_str::<Preferences>(r#"{"automatic":false}"#)
                 .unwrap()
                 .automatic
         );
+    }
+
+    #[test]
+    fn input_protection_survives_other_preference_changes_and_relaunch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let prefs = Preferences {
+            keep_tv_on: true,
+            shortcut_enabled: true,
+            shortcut: Some("F8".into()),
+            ..Default::default()
+        };
+        write_preferences(&path, &prefs).unwrap();
+        save_preferences(&path, false).unwrap();
+        let (snapshot, _) = initial_view(&path, false, false).unwrap();
+        assert!(snapshot.keep_tv_on);
+        assert!(!snapshot.automatic);
+        assert!(snapshot.shortcut_enabled);
+        assert_eq!(snapshot.shortcut.as_deref(), Some("F8"));
     }
 
     #[test]

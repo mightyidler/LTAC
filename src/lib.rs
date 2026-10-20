@@ -2,6 +2,7 @@ pub mod config;
 pub mod connection;
 pub mod controller;
 pub mod discovery;
+pub mod hdmi;
 pub mod journal;
 pub mod lifecycle;
 #[cfg(windows)]

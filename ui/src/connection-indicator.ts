@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RibbonCurve, indicatorShape, ringRadii, completionPose, updateRingGeometry } from './connection-motion';
 import { cssTimeMs } from './motion';
-import checkIcon from '../../Vectors/Check.svg?raw';
+import { icons } from './icons';
 
 // Curve and completion choreography adapted from psyonline's Her / OS1 loader:
 // https://codepen.io/psyonline/pen/yayYWg (CodePen, MIT).
@@ -48,7 +48,7 @@ export class ConnectionIndicator {
   private onPreference = () => { if (this.active) { cancelAnimationFrame(this.frame); this.previous = 0; this.frame = requestAnimationFrame(this.animate); } };
 
   constructor(private host: HTMLElement) {
-    this.host.innerHTML = `<span class="indicator-fallback" aria-hidden="true">∞</span><svg class="indicator-ring" viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="${indicatorShape.radius}" stroke="currentColor" stroke-width="${indicatorShape.stroke}"/></svg><span class="indicator-result t-success-check" data-state="out" aria-hidden="true">${checkIcon.replaceAll('"white"', '"currentColor"')}</span>`;
+    this.host.innerHTML = `<span class="indicator-fallback" aria-hidden="true">∞</span><svg class="indicator-ring" viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="${indicatorShape.radius}" stroke="currentColor" stroke-width="${indicatorShape.stroke}"/></svg><span class="indicator-result t-success-check" data-state="out" aria-hidden="true">${icons.check}</span>`;
     const path = this.host.querySelector('path')!;
     const length = Math.ceil(path.getTotalLength()) + 1;
     path.style.strokeDasharray = String(length);
@@ -156,7 +156,7 @@ export class ConnectionIndicator {
       this.host.dataset.state = this.outcome;
       this.onRing?.(); this.onRing = null;
       const result = this.host.querySelector<HTMLElement>('.indicator-result')!;
-      result.innerHTML = this.outcome === 'success' ? checkIcon.replaceAll('"white"', '"currentColor"') : `<svg width="24" height="24" viewBox="0 0 24 24" fill="none">${['M7 7l10 10', 'M17 7L7 17'].map(d => `<path d="${d}" stroke="currentColor" stroke-width="${indicatorShape.stroke}" stroke-linecap="round" stroke-linejoin="round"/>`).join('')}</svg>`;
+      result.innerHTML = this.outcome === 'success' ? icons.check : `<svg width="24" height="24" viewBox="0 0 24 24" fill="none">${['M7 7l10 10', 'M17 7L7 17'].map(d => `<path d="${d}" stroke="currentColor" stroke-width="${indicatorShape.stroke}" stroke-linecap="round" stroke-linejoin="round"/>`).join('')}</svg>`;
       const style = getComputedStyle(this.host);
       const delay = cssTimeMs(style.getPropertyValue('--check-path-delay'), 0);
       const stagger = cssTimeMs(style.getPropertyValue('--indicator-cross-stagger'), 0);

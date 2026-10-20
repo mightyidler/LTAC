@@ -1,5 +1,5 @@
 
-@font-face { font-family: Pretendard; src: url('/fonts/PretendardVariable.woff2') format('woff2'); font-weight: 45 920; font-display: swap; }
+@font-face { font-family: Pretendard; src: url('/fonts/pretendard/PretendardVariable.woff2') format('woff2'); font-weight: 45 920; font-display: swap; }
 :root { font-family: Pretendard, sans-serif; color: var(--text-primary); font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased;  --app-width: 375px; --app-height: 500px; --toggle-travel: 24px; --toggle-track: 150ms; --morph-r-closed: 18px; --morph-r-open: 12px; --morph-slide: 8px; --morph-rotate: 0deg; --check-y-amount: 4px; --check-blur-from: 2px; --check-rotate-from: 12deg; }
 * { box-sizing: border-box; letter-spacing: -0.01em; }
 html, body { margin: 0; background: transparent; }
@@ -18,12 +18,12 @@ button:hover:not(:disabled) { background-color: var(--interaction-hover); }
 p, h1, h2 { margin: 0; }
 svg { display: block; flex-shrink: 0; }
 [hidden] { display: none !important; }
-#app { width: calc(var(--app-width) + 8px); height: calc(var(--app-height) + 8px); padding: 4px; }
-/* The real border owns the outer curve. Everything painted inside it, including
-   backdrop filters, is clipped by a separate, stationary inner surface. */
-.app-window { --window-radius: 12px; --window-stroke: 1px; --window-inner-radius: calc(var(--window-radius) - var(--window-stroke)); width: var(--app-width); height: var(--app-height); position: relative; background: transparent; border: var(--window-stroke) solid var(--window-border); border-radius: var(--window-radius); overflow: hidden; isolation: isolate; }
-.app-surface { position: absolute; inset: 0; border-radius: var(--window-inner-radius); background: var(--window-bg); overflow: hidden; isolation: isolate; }
-.window-controls { position: absolute; inset: 0 0 auto; height: 52px; padding: 11px; display: flex; align-items: center; z-index: 10; background: var(--bg-header); border-radius: var(--window-inner-radius) var(--window-inner-radius) 0 0; -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); user-select: none; }
+#app { width: 100%; height: 100vh; padding: 0; }
+/* Windows owns the outer border, shadow and corner clipping. The webview
+   fills the entire client area; no transparent gutter or duplicate CSS frame. */
+.app-window { --scrollbar-bottom-inset: 8px; width: 100%; height: 100%; position: relative; background: var(--window-bg); border: 0; border-radius: 0; overflow: hidden; isolation: isolate; }
+.app-surface { position: absolute; inset: 0; background: var(--window-bg); overflow: hidden; isolation: isolate; }
+.window-controls { position: absolute; inset: 0 0 auto; height: 52px; padding: 11px; display: flex; align-items: center; z-index: 10; background: var(--bg-header); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); user-select: none; }
 .window-actions { display: flex; gap: 12px; margin-left: auto; }
 .window-button { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border-radius: 14px; background: var(--surface-control); color: var(--icon-secondary); }
 .window-button > svg { width: 16px; height: 16px; }
@@ -34,12 +34,13 @@ svg { display: block; flex-shrink: 0; }
 #pages { --page-navigation-dur: 350ms; --page-navigation-ease: cubic-bezier(.32, .72, 0, 1); --page-replace-dur: 250ms; position: absolute; inset: 0; z-index: 0; border-radius: inherit; overflow: hidden; }
 .t-page { display: flex; flex-direction: column; }
 /* Opaque pages occlude the content underneath during push/pop. The window
-   canvas, border and rounded clip stay on the stationary surface/viewport;
-   pages have no moving rounded corners that could expose the previous page. */
+   canvas stays stationary while Windows clips the outer corners.
+   Pages fill the client area throughout the transition. */
 #pages > .t-page { background: var(--bg-canvas); border-radius: 0; transition: none; filter: none; transform: none; will-change: auto; }
-.page-scroll { min-height: 0; overflow-y: auto; overflow-x: hidden; overflow-anchor: none; flex: 1; padding: 60px 15px 16px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
+/* Inset every page scrollbar by 3px; compensate padding to preserve content alignment. */
+.page-scroll { min-height: 0; overflow-y: auto; overflow-x: hidden; overflow-anchor: none; flex: 1; margin-right: 3px; padding: 60px 12px 16px 15px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
 .t-page[data-view="choose"] { --choice-footer-height: 68px; --choice-footer-gap: 12px; timeline-scope: --choice-scroll; }
-.choice-scroll { padding: 60px 7px calc(var(--choice-footer-height) + var(--choice-footer-gap)); scroll-timeline: --choice-scroll block; }
+.choice-scroll { padding: 60px 4px calc(var(--choice-footer-height) + var(--choice-footer-gap)) 7px; scroll-timeline: --choice-scroll block; }
 .choice-scroll .page-heading { padding-inline: 8px; }
 .discovery-state { --panel-translate-y: 0px; --panel-close-dur: 150ms; position: relative; min-height: calc(var(--app-height) - 210px); overflow: hidden; }
 .discovery-panel { position: absolute; inset: 0 0 auto; }
@@ -49,11 +50,11 @@ svg { display: block; flex-shrink: 0; }
   .page-scroll { scrollbar-width: auto; scrollbar-color: auto; }
   .page-scroll::-webkit-scrollbar { width: 4px; background: transparent; }
   .page-scroll::-webkit-scrollbar-button { display: none; }
-  .page-scroll::-webkit-scrollbar-track { background: transparent; margin-block: 56px 72px; }
-  .choice-scroll::-webkit-scrollbar-track { margin-block: 52px 68px; }
+  .page-scroll::-webkit-scrollbar-track { background: transparent; margin-block: 56px var(--scrollbar-bottom-inset); }
+  .choice-scroll::-webkit-scrollbar-track { margin-block: 52px var(--scrollbar-bottom-inset); }
   .page-scroll::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 4px; }
   .page-scroll::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
-  .home-scroll::-webkit-scrollbar-track { margin-block: 52px 8px; }
+  .home-scroll::-webkit-scrollbar-track { margin-block: 52px var(--scrollbar-bottom-inset); }
 }
 .page-heading { margin-bottom: 16px; display: flex; flex-direction: column; gap: 2px; }
 .page-heading p { color: var(--text-header); font-size: 15px; line-height: 20px; }
@@ -67,7 +68,7 @@ svg { display: block; flex-shrink: 0; }
 .selection-check { margin-left: auto; opacity: 0; scale: .8; transition: opacity var(--duration-fast) var(--ease-in-out), scale var(--duration-fast) var(--ease-smooth-out); }
 .device-choice[aria-selected="true"] .selection-check { opacity: 1; scale: 1; }
 .page-footer { position: absolute; bottom: 0; left: 0; right: 0; display: flex; gap: 8px; padding: 16px 15px; background: transparent; z-index: 4; }
-.page-footer::before { content: ''; position: absolute; inset: 0; z-index: -1; background: var(--bg-scrim); border-radius: 0 0 var(--window-inner-radius) var(--window-inner-radius); -webkit-backdrop-filter: blur(40px); backdrop-filter: blur(40px); pointer-events: none; }
+.page-footer::before { content: ''; position: absolute; inset: 0; z-index: -1; background: var(--bg-scrim); -webkit-backdrop-filter: blur(40px); backdrop-filter: blur(40px); pointer-events: none; }
 /* The last row clears the footer before the final bottom gap is scrolled.
    An inactive timeline (a short list) keeps the divider hidden. */
 .choice-scroll + .page-footer { min-height: var(--choice-footer-height); }
@@ -133,7 +134,7 @@ svg { display: block; flex-shrink: 0; }
 .has-webgl .indicator-fallback { display: none; }
 .connection-indicator[data-state="failure"] { color: var(--status-error); }
 @keyframes fallback-ribbon { to { transform: rotateX(65deg); } }
-.home-scroll { padding-top: 56px; }
+.home-scroll { padding-top: 56px; padding-bottom: 0; }
 .home-scroll h2 { font-size: 13px; line-height: 18px; color: var(--text-label); padding: 0; }
 .home-devices-empty { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--duration-fast) var(--ease-smooth-out), opacity var(--duration-quick) var(--ease-in-out); }
 .home-devices-empty[data-open="true"] { grid-template-rows: 1fr; opacity: 1; }
@@ -169,25 +170,28 @@ svg { display: block; flex-shrink: 0; }
 .shortcut-button > span { grid-area: 1 / 1; display: block; max-width: 100%; white-space: pre; overflow-wrap: anywhere; }
 .shortcut-button > .shortcut-copy-outgoing { grid-area: auto; position: absolute; left: 50%; top: 50%; translate: -50% -50%; pointer-events: none; }
 .shortcut-button > .t-text-swap.is-exit { transition-delay: 0ms; }
-.shortcut-button.capturing, .shortcut-button.capturing:hover { background: var(--button-primary-bg); box-shadow: inset 0 0 0 1px var(--button-primary-bg); color: var(--button-primary-text); }
-.shortcut-button { --shimmer-base: var(--text-on-primary-muted); --shimmer-highlight: var(--button-primary-text); }
 .more-anchor { width: 24px; height: 24px; position: relative; z-index: 5; }
-.more-anchor:has([data-open="true"]) { z-index: 8; }
+.saved-device:has(.device-menu[data-closing="true"]) { z-index: 9; }
+.saved-device:has(.device-menu[data-open="true"]) { z-index: 10; }
+.more-anchor:has([data-open="true"], [data-closing="true"]) { z-index: 8; }
 .device-menu { position: absolute; right: 0; top: 0; width: 24px; height: 24px; background: var(--menu-bg); box-shadow: inset 0 0 0 1px var(--border-subtle); }
-.device-menu { --menu-min-width: 140px; --morph-open-dur: var(--duration-fast); --morph-close-dur: var(--duration-quick); --morph-r-open: 23px; }
+.device-menu { --menu-min-width: 140px; --menu-open-height: 84px; --morph-open-dur: var(--duration-fast); --morph-close-dur: var(--duration-quick); --morph-r-open: 23px; }
 /* Press the same surface that becomes the menu. Its closed center stays fixed
    while the released surface expands down and left from the More button. */
 .device-menu { transform-origin: calc(100% - 12px) 12px; transition: width var(--morph-close-dur) var(--morph-close-ease), height var(--morph-close-dur) var(--morph-close-ease), border-radius var(--morph-close-dur) var(--morph-close-ease), scale var(--duration-quick) var(--ease-smooth-out); }
 .device-menu:has(.more-button:active):not([data-open="true"]) { scale: .9; }
-.device-menu[data-open="true"] { width: var(--menu-open-width, var(--menu-min-width)); height: 80px; background: var(--menu-overlay); box-shadow: inset 0 0 0 1px var(--border-subtle), 0 4px 8px var(--shadow-menu); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); }
+.device-menu[data-open="true"] { width: var(--menu-open-width, var(--menu-min-width)); height: var(--menu-open-height); background: var(--menu-overlay); box-shadow: inset 0 0 0 1px var(--border-subtle), 0 4px 8px var(--shadow-menu); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); }
 .device-menu[data-open="true"] { transition: width var(--morph-open-dur) var(--morph-ease), height var(--morph-open-dur) var(--morph-ease), border-radius var(--morph-open-dur) var(--morph-ease), scale var(--duration-quick) var(--ease-smooth-out); }
+/* Shrink the visible surface back to its trigger using the existing morph.
+   Fading its material first makes the size transition appear to vanish. */
+.device-menu[data-closing="true"] { background: var(--menu-overlay); box-shadow: inset 0 0 0 1px var(--border-subtle), 0 4px 8px var(--shadow-menu); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); }
 .device-menu .t-morph-plus { display: grid; place-items: center; width: 24px; height: 24px; top: 0; bottom: auto; padding: 0; color: var(--icon-secondary); }
 .device-menu .more-button:active:not(:disabled) { scale: 1; }
 .device-menu .t-morph-plus, .device-menu .t-morph-plus svg { transform-origin: center; }
 /* Cross-fade in place: a translated ellipsis looks off-center on menu close. */
 .device-menu[data-open="true"] .t-morph-plus { transform: none; }
 .device-menu[data-open="true"] .t-morph-plus svg { transform: none; }
-.device-menu .t-morph-menu { padding: 4px; display: flex; flex-direction: column; gap: 0; }
+.device-menu .t-morph-menu { padding: 4px; display: flex; flex-direction: column; gap: 4px; }
 .device-menu [role="menuitem"] { display: flex; align-items: center; justify-content: flex-start; gap: 8px; background: transparent; color: var(--text-primary); border-radius: 18px; padding: 10px; font-size: 13px; line-height: 16px; white-space: nowrap; text-align: left; }
 .device-menu [role="menuitem"] > svg { width: 16px; height: 16px; }
 .device-menu [role="menuitem"]:is(:hover, :active, :focus-visible) { background: var(--surface-subtle); outline: none; }

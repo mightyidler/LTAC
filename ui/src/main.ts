@@ -9,31 +9,27 @@ import { Toast } from './toast';
 import { initializePreferences, language, theme, setLanguage, setTheme, type Language, type Theme } from './preferences';
 import { Navigation } from './navigation';
 import { WindowTitle } from './window-title';
+import { HdmiMenu } from './hdmi-menu';
 import './motion.css';
 import './style.css';
 import './tokens.css';
 import './typography.css';
-import tv from '../../Vectors/TV.svg?raw';
-import minus from '../../Vectors/Minus.svg?raw';
-import close from '../../Vectors/X.svg?raw';
-import refresh from '../../Vectors/Refresh.svg?raw';
-import more from '../../Vectors/More Horizontal.svg?raw';
-import editIcon from '../../Vectors/Edit.svg?raw';
-import deleteIcon from '../../Vectors/Delete.svg?raw';
-import chevronRight from '../../Vectors/Chevron right.svg?raw';
-import checkIcon from '../../Vectors/Check.svg?raw';
+import './status-typography.css';
+import './thinking-states.css';
+import './status-appearance.css';
+import './hdmi-menu.css';
+import { icons } from './icons';
 
 // Prepare preview styles and both text weights before the first visible screen.
-const previewModule = !desktop && import.meta.env.DEV ? await import('./preview') : null;
+const previewModule = !desktop && import.meta.env.DEV ? await import('../dev/preview') : null;
 const initialUpdate = await appUpdateState().catch(() => ({ version: __APP_VERSION__, completed: false }));
 await Promise.all([document.fonts.load('300 15px Pretendard'), document.fonts.load('400 15px Pretendard'), document.fonts.load('500 24px Pretendard')]).catch(() => {});
 await initializePreferences();
 const app = document.querySelector<HTMLElement>('#app')!;
-const icon = (svg: string) => svg.replaceAll('"white"', '"currentColor"');
-const check = icon(checkIcon).replace('<svg ', '<svg aria-hidden="true" ');
+const check = icons.check;
 const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
-app.innerHTML = `<div class="app-window"><div class="app-surface"><header class="window-controls"><button id="navigation" class="window-button" aria-label="${t("기기 추가")}" hidden></button><span id="compact-title">${t("연결할 장치를 선택하세요")}</span><div class="window-actions"><button id="minimize" class="window-button" aria-label="${t("최소화")}">${icon(minus)}</button><button id="close" class="window-button" aria-label="${t("닫기")}">${icon(close)}</button></div></header><div id="pages" class="t-page-slide" data-page="1"><section id="page-a" class="t-page" data-page-id="1"></section><section id="page-b" class="t-page" data-page-id="2" inert></section></div><div class="toast-placement"><div id="toast" class="app-toast t-toast" role="alert" aria-live="assertive" aria-atomic="true" aria-hidden="true" inert><span class="toast-message"></span></div></div></div></div>`;
+app.innerHTML = `<div class="app-window"><div class="app-surface"><header class="window-controls"><button id="navigation" class="window-button" aria-label="${t("기기 추가")}" hidden></button><span id="compact-title">${t("연결할 장치를 선택하세요")}</span><div class="window-actions"><button id="minimize" class="window-button" aria-label="${t("최소화")}">${icons.minus}</button><button id="close" class="window-button" aria-label="${t("닫기")}">${icons.close}</button></div></header><div id="pages" class="t-page-slide" data-page="1"><section id="page-a" class="t-page" data-page-id="1"></section><section id="page-b" class="t-page" data-page-id="2" inert></section></div><div class="toast-placement"><div id="toast" class="app-toast t-toast" role="alert" aria-live="assertive" aria-atomic="true" aria-hidden="true" inert><span class="toast-message"></span></div></div></div></div>`;
 const toast = new Toast(el('toast'));
 const navigation = new Navigation(el<HTMLButtonElement>('navigation'));
 const windowTitle = new WindowTitle(el('compact-title'));
@@ -62,6 +58,8 @@ let capture = false;
 let shortcutSaving = false;
 let shortcutHint = t("키를 눌러주세요");
 let activeMenu: HTMLElement | null = null;
+const closingMenus = new WeakMap<HTMLElement, object>();
+const hdmiMenus = new WeakMap<HTMLElement, HdmiMenu>();
 let pairArgs: Record<string, unknown> = {};
 let hasMounted = false;
 let lastError: string | null = null;
@@ -107,7 +105,7 @@ function render(backward = false) {
   if (state.stage === 'ready') { renderHome(backward); return; }
   if (state.stage === 'pairing') { renderPair(); return; }
   if (state.stage === 'pair_error') { renderFailure(); return; }
-  const mounted = mount('choose', `<div id="list-scroll" class="page-scroll choice-scroll">${title(t("연결할 장치를 선택하세요"))}<div id="discovery-state" class="discovery-state"><div id="choices-panel" class="discovery-panel t-panel-slide" data-open="false" inert aria-hidden="true"><div id="choice-rows" class="choices" role="listbox" aria-label="${t("장치 목록")}"></div></div><div id="empty-state" class="discovery-panel t-panel-slide" data-open="false" inert aria-hidden="true"><div class="empty-state"><span class="empty-icon" aria-hidden="true">${icon(tv)}</span><div class="empty-copy"><p>${t("장치를 찾을 수 없어요")}</p><small>${t("같은 네트워크에 연결되어 있는지 확인해주세요")}</small></div></div></div><div id="search-status" class="discovery-panel t-panel-slide" data-open="false" inert aria-hidden="true"><div class="search-status" role="status" aria-label="${t("장치 검색 중")}"><div class="search-progress" aria-hidden="true"><span></span></div></div></div></div></div><footer class="page-footer"><button id="refresh" class="action refresh" aria-label="${t("다시 검색")}">${icon(refresh)}</button>${action(t("직접 입력"), 'manual')}${action(t("연결"), 'pair', true, true)}</footer>`, backward);
+  const mounted = mount('choose', `<div id="list-scroll" class="page-scroll choice-scroll">${title(t("연결할 장치를 선택하세요"))}<div id="discovery-state" class="discovery-state"><div id="choices-panel" class="discovery-panel t-panel-slide" data-open="false" inert aria-hidden="true"><div id="choice-rows" class="choices" role="listbox" aria-label="${t("장치 목록")}"></div></div><div id="empty-state" class="discovery-panel t-panel-slide" data-open="false" inert aria-hidden="true"><div class="empty-state"><span class="empty-icon" aria-hidden="true">${icons.tv}</span><div class="empty-copy"><p>${t("장치를 찾을 수 없어요")}</p><small>${t("같은 네트워크에 연결되어 있는지 확인해주세요")}</small></div></div></div><div id="search-status" class="discovery-panel t-panel-slide" data-open="false" inert aria-hidden="true"><div class="search-status" role="status" aria-label="${t("장치 검색 중")}"><div class="search-progress" aria-hidden="true"><span></span></div></div></div></div></div><footer class="page-footer"><button id="refresh" class="action refresh" aria-label="${t("다시 검색")}">${icons.refresh}</button>${action(t("직접 입력"), 'manual')}${action(t("연결"), 'pair', true, true)}</footer>`, backward);
   if (mounted) {
     el('manual').onclick = () => { manual = true; render(); };
     el('refresh').onclick = () => void search();
@@ -119,7 +117,7 @@ function render(backward = false) {
   if (!busy || mounted) syncRows(el('choice-rows'), state.choices, choice => choice.id, choice => {
     const row = document.createElement('div'); row.className = 'device-choice-row'; row.setAttribute('role', 'presentation');
     const button = document.createElement('button'); button.type = 'button'; button.tabIndex = -1; button.className = 'device-choice'; button.setAttribute('role', 'option');
-    button.innerHTML = `${icon(tv)}<span class="choice-name"></span><span class="selection-check">${check}</span>`;
+    button.innerHTML = `${icons.tv}<span class="choice-name"></span><span class="selection-check">${check}</span>`;
     button.onclick = () => {
       if (localBusy || state.busy || state.stage === 'searching') return;
       selected = choice.id; render();
@@ -289,7 +287,7 @@ function updateUpdateButton() {
 }
 const languageNames: Record<Language, string> = { ko: '한국어', en: 'English', ja: '日本語' };
 const themeName = (value: Theme) => t(value === 'system' ? '시스템' : value === 'light' ? '라이트' : '다크');
-const chevron = icon(chevronRight).replace('<svg ', '<svg class="preference-chevron" aria-hidden="true" ');
+const chevron = icons.chevronRight.replace('<svg ', '<svg class="preference-chevron" ');
 function refreshWindowLabels() {
   app.setAttribute('aria-label', t('LG TV 전원 제어'));
   el('minimize').setAttribute('aria-label', t('최소화'));
@@ -329,7 +327,7 @@ function renderPreference(backward = false) {
 function renderHome(backward: boolean) {
   addingDevice = false;
   const toggle = (id: string, on: boolean, label: string) => `<button id="${id}" class="t-toggle" role="switch" aria-label="${label}" aria-checked="${on}" data-on="${on}"><span class="t-toggle-thumb"></span></button>`;
-  const mounted = mount('home', `<div class="page-scroll home-scroll"><section class="device-section"><h2>${t("기기 목록")}</h2><div id="saved-devices" class="saved-devices"></div><div id="home-devices-empty" class="home-devices-empty" data-open="${state.devices.length === 0}" aria-hidden="${state.devices.length > 0}"><div><p>${t("연결된 기기가 없습니다")}</p></div></div></section><section class="settings-section"><h2>${t("전원")}</h2><div class="setting-row"><div class="setting-copy"><p>${t("전원 동기화")}</p><small>${t("PC 전원에 맞춰 TV도 자동으로 켜지고 꺼집니다")}</small></div>${toggle('automatic', state.automatic, t("전원 동기화"))}</div><div class="divider"></div><div class="shortcut-group"><div class="setting-row"><div class="setting-copy"><p>${t("절전 단축키")}</p><small>${t("PC와 TV를 함께 절전 상태로 전환합니다")}</small></div>${toggle('shortcut-enabled', state.shortcut_enabled, t("절전 단축키"))}</div><div id="shortcut-settings" class="t-acc shortcut-panel" data-open="${state.shortcut_enabled}"><div class="t-acc-panel"><div class="t-acc-panel-inner"><div class="shortcut-setting"><p>${t("단축키 설정")}</p><button id="shortcut" class="shortcut-button"><span id="shortcut-label" class="t-text-swap">${escape(state.shortcut ? shortcutLabel(state.shortcut) : t("단축키 지정"))}</span></button></div></div></div></div></div></section></div>`, backward);
+  const mounted = mount('home', `<div class="page-scroll home-scroll"><section class="device-section"><h2>${t("기기 목록")}</h2><div id="saved-devices" class="saved-devices"></div><div id="home-devices-empty" class="home-devices-empty" data-open="${state.devices.length === 0}" aria-hidden="${state.devices.length > 0}"><div><p>${t("연결된 기기가 없습니다")}</p></div></div></section><section class="settings-section"><h2>${t("전원")}</h2><div class="setting-row"><div class="setting-copy"><p>${t("전원 동기화")}</p><small>${t("PC 전원에 맞춰 TV도 자동으로 켜지고 꺼집니다")}</small></div>${toggle('automatic', state.automatic, t("전원 동기화"))}</div><div class="divider"></div><div class="setting-row"><div class="setting-copy"><p>${t("TV 단독 사용 시 전원 유지")}</p><small>${t("PC가 아닌 TV 화면을 사용 중일 때는 TV를 끄지 않습니다")}</small></div>${toggle('keep-tv-on', state.keep_tv_on, t("TV 단독 사용 시 전원 유지"))}</div><div class="divider"></div><div class="shortcut-group"><div class="setting-row"><div class="setting-copy"><p>${t("절전 단축키")}</p><small>${t("PC와 TV를 함께 절전 상태로 전환합니다")}</small></div>${toggle('shortcut-enabled', state.shortcut_enabled, t("절전 단축키"))}</div><div id="shortcut-settings" class="t-acc shortcut-panel" data-open="${state.shortcut_enabled}"><div class="t-acc-panel"><div class="t-acc-panel-inner"><div class="shortcut-setting"><p>${t("단축키 설정")}</p><button id="shortcut" class="shortcut-button"><span id="shortcut-label" class="t-text-swap">${escape(state.shortcut ? shortcutLabel(state.shortcut) : t("단축키 지정"))}</span></button></div></div></div></div></div></section></div>`, backward);
   if (mounted) {
     const settings = current().querySelector<HTMLElement>('.settings-section')!;
     settings.insertAdjacentHTML('afterend', `<section class="general-section"><h2>${t('일반')}</h2><div class="setting-row preference-row"><span id="language-label" class="setting-copy">${t('언어')}</span><button id="language-setting" class="preference-link" aria-labelledby="language-label language-value"><span id="language-value" class="preference-value">${languageNames[language]}</span>${chevron}</button></div><div class="divider"></div><div class="setting-row preference-row"><span id="theme-label" class="setting-copy">${t('테마')}</span><button id="theme-setting" class="preference-link" aria-labelledby="theme-label theme-value"><span id="theme-value" class="preference-value">${themeName(theme)}</span>${chevron}</button></div></section><section class="about-section"><div class="setting-row update-row"><div class="setting-copy"><p>LTAC</p><small id="app-version" class="t-text-swap">${escape(appUpdate.version)}</small></div><button id="check-update" class="shortcut-button"><span class="t-text-swap" aria-live="polite" aria-atomic="true">${t(appUpdate.label)}</span></button></div></section>`);
@@ -342,6 +340,7 @@ function renderHome(backward: boolean) {
       if (view === 'home' && current().contains(scroll)) app.classList.toggle('scrolled', scroll.scrollTop > 0);
     };
     el('automatic').onclick = async () => { await run('set_automatic', { enabled: !state.automatic }); if (view === 'home') renderHome(false); };
+    el('keep-tv-on').onclick = async () => { await run('set_keep_tv_on', { enabled: !state.keep_tv_on }); if (view === 'home') renderHome(false); };
     el('shortcut-enabled').onclick = async () => { await run('set_shortcut', { enabled: !state.shortcut_enabled, shortcut: state.shortcut }); if (view === 'home') renderHome(false); };
     el('shortcut').onclick = () => {
       if (shortcutSaving) return;
@@ -357,14 +356,36 @@ function renderHome(backward: boolean) {
   }
   syncRows(el('saved-devices'), state.devices, device => device.id, device => {
     const row = document.createElement('div'); row.className = 'saved-device';
-    row.innerHTML = `<span class="tv-tile">${icon(tv)}</span><div class="device-info"><p class="saved-name"></p><small class="saved-address"></small></div><div class="more-anchor"><div class="t-morph device-menu" data-open="false"><div class="t-morph-menu" role="menu" inert><button role="menuitem" data-action="edit">${icon(editIcon)}<span>${t("정보 수정")}</span></button><button role="menuitem" class="destructive" data-action="remove">${icon(deleteIcon)}<span>${t("삭제")}</span></button></div><button class="t-morph-plus more-button" aria-label="${escape(device.name)} ${t("메뉴")}" aria-expanded="false" aria-haspopup="menu">${icon(more)}</button></div></div>`;
+    row.innerHTML = `<span class="tv-tile">${icons.tv}</span><div class="device-info"><p class="saved-name"></p><div class="hdmi-anchor"></div></div><div class="more-anchor"><div class="t-morph device-menu" data-open="false"><div class="t-morph-menu" role="menu" inert><button role="menuitem" data-action="edit">${icons.edit}<span>${t("정보 수정")}</span></button><button role="menuitem" class="destructive" data-action="remove">${icons.delete}<span>${t("삭제")}</span></button></div><button class="t-morph-plus more-button" aria-label="${escape(device.name)} ${t("메뉴")}" aria-expanded="false" aria-haspopup="menu">${icons.more}</button></div></div>`;
+    hdmiMenus.set(row, new HdmiMenu(row.querySelector('.hdmi-anchor')!, (menu, trigger) => {
+      if (localBusy) return;
+      const opening = menu.dataset.open !== 'true'; closeMenu();
+      if (opening) {
+        const bottom = current().querySelector('.home-scroll')!.getBoundingClientRect().bottom;
+        const height = parseFloat(getComputedStyle(menu).getPropertyValue('--menu-open-height'));
+        menu.dataset.side = bottom - trigger.getBoundingClientRect().bottom < height + 6 ? 'up' : 'down';
+        closingMenus.delete(menu); delete menu.dataset.closing;
+        const dropdown = menu.querySelector<HTMLElement>('.t-dropdown')!;
+        dropdown.dataset.origin = menu.dataset.side === 'up' ? 'bottom-left' : 'top-left';
+        dropdown.classList.remove('is-closing');
+        fitMenuWidth(menu); activeMenu = menu; menu.dataset.open = 'true';
+        dropdown.classList.add('is-open');
+        menu.querySelector<HTMLElement>('[role=menu]')!.inert = false;
+        trigger.setAttribute('aria-expanded', 'true');
+        (menu.querySelector<HTMLButtonElement>('[aria-checked=true]') ?? menu.querySelector<HTMLButtonElement>('[role=menuitemradio]'))!.focus({ preventScroll: true });
+      }
+    }, async port => {
+      const saved = await run('set_device_hdmi', { id: device.id, pcHdmi: port });
+      if (view === 'home') renderHome(false);
+      return saved;
+    }, menu => { if (activeMenu === menu) closeMenu(true); }));
     const button = row.querySelector<HTMLButtonElement>('.more-button')!;
     disableTabStops(row);
     button.onclick = event => {
       event.stopPropagation(); if (localBusy) return;
       const menu = button.closest<HTMLElement>('.t-morph')!;
       const opening = menu.dataset.open !== 'true'; closeMenu();
-      if (opening) { fitMenuWidth(menu); activeMenu = menu; menu.dataset.open = 'true'; menu.querySelector<HTMLElement>('.t-morph-menu')!.inert = false; button.setAttribute('aria-expanded', 'true'); menu.querySelector<HTMLButtonElement>('[role=menuitem]')!.focus({ preventScroll: true }); }
+      if (opening) { closingMenus.delete(menu); delete menu.dataset.closing; fitMenuWidth(menu); activeMenu = menu; menu.dataset.open = 'true'; menu.querySelector<HTMLElement>('.t-morph-menu')!.inert = false; button.setAttribute('aria-expanded', 'true'); menu.querySelector<HTMLButtonElement>('[role=menuitem]')!.focus({ preventScroll: true }); }
     };
     row.querySelectorAll<HTMLButtonElement>('[role=menuitem]').forEach(item => item.onclick = async () => {
       if (localBusy) return;
@@ -378,18 +399,19 @@ function renderHome(backward: boolean) {
     });
     return row;
   }, (row, device) => {
-    for (const [selector, text] of [['.saved-name', device.name], ['.saved-address', device.mac ?? device.ip]]) {
+    for (const [selector, text] of [['.saved-name', device.name]]) {
       const node = row.querySelector<HTMLElement>(selector)!;
       if (!node.textContent) node.textContent = text;
       else if (node.textContent !== text) void swapText(node, text);
     }
+    hdmiMenus.get(row)!.update(device);
   }, !mounted);
   const empty = state.devices.length === 0;
   current().querySelector<HTMLElement>('.device-section')!.dataset.empty = String(empty);
   const emptyNotice = el('home-devices-empty');
   emptyNotice.dataset.open = String(empty);
   emptyNotice.setAttribute('aria-hidden', String(!empty));
-  for (const [id, on] of [['automatic', state.automatic], ['shortcut-enabled', state.shortcut_enabled]] as const) {
+  for (const [id, on] of [['automatic', state.automatic], ['keep-tv-on', state.keep_tv_on], ['shortcut-enabled', state.shortcut_enabled]] as const) {
     const button = el<HTMLButtonElement>(id);
     if (button.dataset.on !== String(on)) button.classList.add('is-init');
     button.dataset.on = String(on); button.setAttribute('aria-checked', String(on)); button.disabled = localBusy;
@@ -408,9 +430,9 @@ function renderHome(backward: boolean) {
   reportError(state.error);
 }
 function fitMenuWidth(menu: HTMLElement) {
-  const content = getComputedStyle(menu.querySelector<HTMLElement>('.t-morph-menu')!);
+  const content = getComputedStyle(menu.querySelector<HTMLElement>('[role=menu]')!);
   const outerPadding = parseFloat(content.paddingLeft) + parseFloat(content.paddingRight);
-  const widths = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role=menuitem]'), item => {
+  const widths = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role=menuitem], [role=menuitemradio]'), item => {
     const style = getComputedStyle(item);
     const iconWidth = parseFloat(getComputedStyle(item.querySelector('svg')!).width);
     const textWidth = item.querySelector<HTMLElement>('span')!.scrollWidth;
@@ -421,9 +443,23 @@ function fitMenuWidth(menu: HTMLElement) {
 }
 function closeMenu(focus = false) {
   if (!activeMenu) return;
-  const menu = activeMenu; menu.dataset.open = 'false'; menu.querySelector<HTMLElement>('.t-morph-menu')!.inert = true;
-  const button = menu.querySelector<HTMLButtonElement>('.more-button')!; button.setAttribute('aria-expanded', 'false');
+  const menu = activeMenu;
+  const closing = {}; closingMenus.set(menu, closing);
+  menu.dataset.closing = 'true'; menu.dataset.open = 'false';
+  menu.querySelector<HTMLElement>('[role=menu]')!.inert = true;
+  const dropdown = menu.querySelector<HTMLElement>('.t-dropdown');
+  dropdown?.classList.remove('is-open');
+  dropdown?.classList.add('is-closing');
+  const button = menu.querySelector<HTMLButtonElement>('.more-button, .hdmi-button')!; button.setAttribute('aria-expanded', 'false');
   if (focus) button.focus({ preventScroll: true }); activeMenu = null;
+  // Preserve glass and stacking until the native surface transition finishes.
+  // Cancelled/reversed animations cannot clean up a newer closing operation.
+  void Promise.allSettled((dropdown ?? menu).getAnimations().map(animation => animation.finished)).then(() => {
+    if (closingMenus.get(menu) === closing) {
+      closingMenus.delete(menu); delete menu.dataset.closing;
+      dropdown?.classList.remove('is-closing');
+    }
+  });
 }
 async function run(name: string, args?: Record<string, unknown>, announce = true) {
   if (localBusy) return false;
@@ -491,7 +527,7 @@ window.addEventListener('keydown', async event => {
   if (activeMenu) {
     if (event.key === 'Escape') { event.preventDefault(); closeMenu(true); }
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-      event.preventDefault(); const items = Array.from(activeMenu.querySelectorAll<HTMLButtonElement>('[role=menuitem]'));
+      event.preventDefault(); const items = Array.from(activeMenu.querySelectorAll<HTMLButtonElement>('[role=menuitem], [role=menuitemradio]'));
       const index = items.indexOf(document.activeElement as HTMLButtonElement);
       items[event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
     }

@@ -6,7 +6,6 @@
 /src-tauri/gen/
 /releases/
 *.jsonl
-!docs/evidence/*.jsonl
 *.lock.tmp
 
 # Local configuration and credentials must never enter source control.
@@ -26,4 +25,30 @@
 # Local TV diagnostics and packaged binaries are not source artifacts.
 /docs/evidence/
 /deliverables/
+
+# Generated output, machine state, editor files and test captures.
+*.log
+*.tmp
+*.bak
+*.dmp
+*.exe
+*.dll
+*.msi
+*.zip
+*.7z
+*.sig
+*.tsbuildinfo
+config.json
+config.*.json
+service-config.json
+id_rsa
+id_ed25519
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+coverage/
+test-results/
+playwright-report/
+**/WebView2/
 

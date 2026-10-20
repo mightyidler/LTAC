@@ -20,4 +20,6 @@ assert.equal(shortcutFromEvent({ ...event, key: '1', code: 'Numpad1' }), 'Ctrl+A
 assert.throws(() => shortcutFromEvent({ ...event, key: 'Unidentified', code: '' }), /다른 키/);
 assert.equal(shortcutLabel('Ctrl+Alt+Semicolon'), 'Ctrl + Alt + ;');
 assert.equal(initialState.automatic, true);
+assert.equal(initialState.keep_tv_on, false);
+assert.equal(initialState.shortcut_enabled, false);
 console.log('Input normalization, hexadecimal validation, and supported shortcut combinations passed.');

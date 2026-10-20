@@ -85,7 +85,7 @@ try {
   assert.equal(normal.label.textContent,'키를 눌러주세요','Do not interrupt an incoming copy');
   await advance(81);
   assert.equal(normal.label.textContent,'Alt + G');
-  assert.equal(normal.button.style['--shortcut-resize-delay'],'350ms','Shrink after the wider outgoing copy has faded');
+  assert.equal(normal.button.style['--shortcut-resize-delay'],'150ms','Shrink after the wider outgoing copy has faded');
   await advance(700);
   assert.equal(normal.button.copies.length,0);
 

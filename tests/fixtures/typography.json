@@ -1,0 +1,134 @@
+{
+  "entries": [
+    {
+      "selector": ":root",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".page-heading p",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".page-heading h1",
+      "originalWeight": 600,
+      "weight": 500
+    },
+    {
+      "selector": "#compact-title",
+      "originalWeight": 600,
+      "weight": 500
+    },
+    {
+      "selector": ".device-choice",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".action:not(.primary)",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".action.primary",
+      "originalWeight": 600,
+      "weight": 500
+    },
+    {
+      "selector": ".empty-state p",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".empty-state small",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".field-group label",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".segments input, .empty-caret",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".connection-copy h1",
+      "originalWeight": 600,
+      "weight": 500
+    },
+    {
+      "selector": ".connection-copy p",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".home-scroll h2",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".home-devices-empty p",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".device-info p",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".device-info small",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".setting-copy p, .preference-row > .setting-copy",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".setting-copy small",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": ".shortcut-setting p",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".shortcut-button, .shortcut-button .t-text-swap",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".device-menu [data-action=\"edit\"]",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".device-menu [data-action=\"remove\"]",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": ".preference-link, .preference-value",
+      "originalWeight": 400,
+      "weight": 300
+    },
+    {
+      "selector": "[data-view=\"language\"] .preference-option",
+      "originalWeight": 500,
+      "weight": 400
+    },
+    {
+      "selector": "[data-view=\"theme\"] .preference-option",
+      "originalWeight": 500,
+      "weight": 400
+    }
+  ]
+}

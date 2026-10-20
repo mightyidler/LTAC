@@ -31,6 +31,11 @@ pub struct Config {
     pub device: Option<crate::discovery::DeviceIdentity>,
     #[serde(default)]
     pub wake_verified: bool,
+    /// TV input connected to this PC. None keeps the TV on under input protection.
+    #[serde(default)]
+    pub pc_hdmi: Option<u8>,
+    #[serde(default)]
+    pub pc_hdmi_source: crate::hdmi::InputSource,
     pub broadcast: Ipv4Addr,
     pub transport: Transport,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -40,7 +45,29 @@ pub struct Config {
 }
 
 impl Config {
+    pub fn hdmi_selection_pinned(&self) -> bool {
+        self.pc_hdmi_source == crate::hdmi::InputSource::Manual
+            || (self.pc_hdmi_source == crate::hdmi::InputSource::Legacy && self.pc_hdmi.is_some())
+    }
+
+    pub fn set_manual_hdmi(&mut self, port: u8) {
+        self.pc_hdmi = Some(port);
+        self.pc_hdmi_source = crate::hdmi::InputSource::Manual;
+    }
+
+    pub fn apply_hdmi_detection(&mut self, detection: Option<u8>) {
+        // An old untagged selection could have been manual; preserve it.
+        if self.hdmi_selection_pinned() {
+            return;
+        }
+        self.pc_hdmi = detection;
+        self.pc_hdmi_source = crate::hdmi::InputSource::Automatic;
+    }
+
     pub fn validate(&self) -> Result<()> {
+        if self.pc_hdmi.is_some_and(|port| !(1..=4).contains(&port)) {
+            bail!("PC HDMI input must be between 1 and 4");
+        }
         if self.ip.is_unspecified() || self.ip.is_multicast() || self.ip.is_broadcast() {
             bail!("TV IP must be an IPv4 unicast address");
         }

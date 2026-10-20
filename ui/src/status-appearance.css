@@ -1,0 +1,29 @@
+/* Active status appearance only; idle and completed buttons retain their styles. */
+:root {
+  --status-active-orange: #ff9230;
+  --status-active-surface: rgb(255 146 48 / 12%);
+  --status-active-highlight: #ffbd80;
+}
+:root[data-theme="light"] {
+  --status-active-orange: #ff8d28;
+  --status-active-surface: rgb(255 141 40 / 12%);
+  --status-active-highlight: #ffb574;
+}
+.shortcut-button.status-active,
+.shortcut-button.status-active:is(:hover, :active, :focus-visible) {
+  background: var(--status-active-surface);
+  box-shadow: inset 0 0 0 1px var(--status-active-surface);
+  color: var(--status-active-orange);
+  padding: 5px 8px;
+  gap: 10px;
+  border-radius: 8px;
+  line-height: 16px;
+}
+/* Keep the outgoing copy's palette stable when the button returns to idle. */
+.shortcut-button > .is-thinking {
+  --think-base: var(--status-active-orange);
+  --think-highlight: var(--status-active-highlight);
+  font-size: 13px;
+  line-height: 16px;
+  letter-spacing: -.02em;
+}

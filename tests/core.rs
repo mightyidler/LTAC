@@ -62,6 +62,8 @@ fn config() -> Config {
         device: None,
         source_path: None,
         wake_verified: false,
+        pc_hdmi: None,
+        pc_hdmi_source: Default::default(),
         protected_key: None,
         certificate_sha256: None,
     }
@@ -104,12 +106,40 @@ fn legacy_config_loads_and_missing_mac_does_not_invent_a_wake_address() {
     let mut value = serde_json::to_value(config()).unwrap();
     value.as_object_mut().unwrap().remove("device");
     value.as_object_mut().unwrap().remove("wake_verified");
+    value.as_object_mut().unwrap().remove("pc_hdmi");
     std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
     let legacy = Config::load(&path).unwrap();
     assert!(legacy.mac.is_some());
     assert!(legacy.device.is_none());
     assert!(!legacy.wake_verified);
+    assert!(legacy.pc_hdmi.is_none());
     value.as_object_mut().unwrap().remove("mac");
     std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
     assert!(Config::load(&path).unwrap().mac.is_none());
+}
+
+#[test]
+fn hdmi_setup_preserves_manual_and_legacy_choices() {
+    use ltac::hdmi::InputSource;
+    let detection = |port| port;
+    let mut auto = config();
+    auto.apply_hdmi_detection(Some(detection(3)));
+    assert_eq!(auto.pc_hdmi, Some(3));
+    assert_eq!(auto.pc_hdmi_source, InputSource::Automatic);
+    auto.apply_hdmi_detection(Some(detection(2)));
+    assert_eq!(auto.pc_hdmi, Some(2));
+    auto.apply_hdmi_detection(None);
+    assert!(auto.pc_hdmi.is_none());
+    auto.set_manual_hdmi(4);
+    auto.apply_hdmi_detection(Some(detection(1)));
+    auto.apply_hdmi_detection(None);
+    assert_eq!(auto.pc_hdmi, Some(4));
+    assert_eq!(auto.pc_hdmi_source, InputSource::Manual);
+    let roundtrip: Config = serde_json::from_value(serde_json::to_value(&auto).unwrap()).unwrap();
+    assert_eq!(roundtrip.pc_hdmi_source, InputSource::Manual);
+    let mut legacy = config();
+    legacy.pc_hdmi = Some(3);
+    legacy.apply_hdmi_detection(Some(detection(1)));
+    assert_eq!(legacy.pc_hdmi, Some(3));
+    assert_eq!(legacy.pc_hdmi_source, InputSource::Legacy);
 }

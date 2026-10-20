@@ -1,0 +1,33 @@
+/* The trigger stays in the row; the panel starts 10px before its text.
+   Keep the standard backdrop reset last so production minification preserves it. */
+.hdmi-anchor { --hdmi-selection-bg: #ffffff14; position: relative; width: var(--hdmi-trigger-width, 72px); height: 16px; z-index: 5; }
+:root[data-theme="light"] .hdmi-anchor { --hdmi-selection-bg: var(--p-black-alpha-14); }
+.hdmi-anchor:has([data-open="true"], [data-closing="true"]) { z-index: 8; }
+.device-menu.hdmi-menu { --menu-open-height: 132px; left: -4px; right: auto; top: -2px; width: calc(var(--hdmi-trigger-width, 72px) + 6px); height: 20px; border-radius: 4px; background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; transition: none; }
+/* The full hover footprint is also the hit target and the scaling surface.
+   Its text and icon retain their original position inside the device row. */
+.hdmi-menu .hdmi-button { position: relative; display: flex; align-items: center; justify-content: flex-start; width: max-content; height: 20px; padding: 2px 2px 2px 4px; border-radius: 4px; background: transparent; font-size: 12px; line-height: 16px; font-weight: var(--font-weight-body); color: var(--text-secondary); transform-origin: center; transition: color var(--duration-quick) var(--ease-in-out), background-color var(--duration-quick) var(--ease-smooth-out), scale var(--duration-quick) var(--ease-smooth-out); }
+.hdmi-trigger-content { display: flex; align-items: center; gap: 0; height: 16px; pointer-events: none; }
+.hdmi-trigger-content > svg { width: 16px; height: 16px; transform-origin: center; transform: rotate(0deg); transition: transform var(--duration-fast) var(--ease-in-out); }
+.hdmi-button[aria-expanded="true"] .hdmi-trigger-content > svg { transform: rotate(180deg); }
+.hdmi-menu .hdmi-button:is(:hover, :focus-visible, :active):not(:disabled) { background: var(--hdmi-selection-bg); color: var(--text-primary); }
+.hdmi-menu .hdmi-button:active:not(:disabled) { scale: .96; transition-duration: var(--duration-quick), var(--duration-quick), var(--duration-micro); }
+.hdmi-menu .hdmi-options { position: absolute; left: -6px; top: calc(100% + 4px); width: var(--menu-open-width, var(--menu-min-width)); display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 4px; border-radius: 18px; background: var(--menu-overlay); box-shadow: inset 0 0 0 1px var(--border-subtle), 0 4px 16px var(--shadow-subtle); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); }
+.hdmi-menu[data-side="up"] .hdmi-options { top: auto; bottom: calc(100% + 4px); }
+/* Keep glass, content and shadow on one compositor surface through dismissal.
+   The quieter close never translates the panel or changes its anchor. */
+.hdmi-menu .hdmi-options { --dropdown-open-dur: var(--duration-fast); --dropdown-close-dur: var(--duration-quick); --dropdown-pre-scale: var(--scale-medium); --dropdown-closing-scale: var(--scale-tiny); --dropdown-ease: var(--ease-smooth-out); }
+.hdmi-menu .hdmi-options.is-closing { transition: transform var(--dropdown-close-dur) var(--dropdown-ease), opacity var(--dropdown-close-dur) var(--ease-in-out); }
+/* Reset only after invisible; avoid an extra transition from .99 back to .97. */
+.hdmi-menu .hdmi-options:not(.is-open):not(.is-closing) { visibility: hidden; transition: none; }
+.hdmi-menu [role="menuitemradio"] { display: flex; align-items: center; justify-content: flex-start; gap: 8px; flex-shrink: 0; height: 28px; padding: 6px; border-radius: 14px; background: transparent; color: var(--text-secondary); font-size: 12px; line-height: 16px; font-weight: var(--font-weight-copy); white-space: nowrap; text-align: left; transition: background-color var(--duration-quick) var(--ease-smooth-out), color var(--duration-quick) var(--ease-in-out); }
+.hdmi-menu [role="menuitemradio"][aria-checked="true"] { background: var(--hdmi-selection-bg); color: var(--text-primary); font-size: 13px; }
+.hdmi-menu [role="menuitemradio"]:is(:hover, :focus-visible) { background: var(--surface-subtle); color: var(--text-primary); }
+.hdmi-menu [role="menuitemradio"][aria-checked="true"]:is(:hover, :focus-visible, :active) { background: var(--hdmi-selection-bg); }
+.hdmi-menu [role="menuitemradio"]:active { scale: 1; }
+.hdmi-menu [role="menuitemradio"] > svg, .hdmi-check, .hdmi-check svg { width: 16px; height: 16px; flex-shrink: 0; }
+.hdmi-check { margin-left: auto; opacity: 0; }
+.hdmi-menu [aria-checked="true"] .hdmi-check { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .hdmi-menu .hdmi-button, .hdmi-trigger-content > svg, .hdmi-menu [role="menuitemradio"] { transition: none !important; }
+}

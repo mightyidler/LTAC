@@ -1,6 +1,6 @@
 [package]
 name = "ltac"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 description = "Minimal LG webOS TV power control for Windows"
 rust-version = "1.89"
@@ -24,10 +24,13 @@ tokio = { version = "1", features = ["macros", "rt", "net", "time", "io-util", "
 tokio-tungstenite = { version = "0.30", features = ["native-tls"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Security_Cryptography", "Win32_Security_Authorization", "Win32_Foundation", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_Services", "Win32_System_SystemServices", "Win32_System_LibraryLoader", "Win32_System_RemoteDesktop", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
+windows-sys = { version = "0.61", features = ["Win32_Security_Cryptography", "Win32_Security_Authorization", "Win32_Foundation", "Win32_System_Memory", "Win32_System_Registry", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_Services", "Win32_System_SystemServices", "Win32_System_LibraryLoader", "Win32_System_RemoteDesktop", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Devices_Display", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
 
 [profile.release]
 opt-level = "s"
 lto = true
 codegen-units = 1
 strip = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }

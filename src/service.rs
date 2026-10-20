@@ -53,19 +53,21 @@ static CONSOLE_DISPLAY: AtomicU32 = AtomicU32::new(u32::MAX);
 static SNAPSHOT_CHANGED: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 struct Bridge {
-    events: mpsc::UnboundedSender<Notice>,
+    events: crate::sync::NoticeSender,
     stop: watch::Sender<u32>,
 }
 #[derive(Serialize, Deserialize)]
 pub struct Settings {
     pub owner_sid: String,
     pub automatic: bool,
+    #[serde(default)]
+    pub keep_tv_on: bool,
 }
 struct Envelope {
     request: Request,
     reply: oneshot::Sender<Response>,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     On,
     Off,
@@ -73,6 +75,7 @@ enum Kind {
 }
 struct Work {
     kind: Kind,
+    check_input: bool,
     urgent: bool,
     delay: Duration,
     reply: Option<oneshot::Sender<Response>>,
@@ -86,13 +89,12 @@ struct DeviceControl {
     off_attempted: AtomicBool,
     io_started: bool,
 }
-struct Fleet(Vec<DeviceControl>);
+struct Fleet(Vec<DeviceControl>, Vec<u8>);
 impl Fleet {
     fn new(mut devices: Vec<Config>) -> Result<Self> {
         anyhow::ensure!(devices.len() <= 16, "At most 16 TVs are supported");
         for (index, config) in devices.iter().enumerate() {
             config.validate()?;
-            config.key()?;
             anyhow::ensure!(
                 !devices[..index].iter().any(|other| other.ip == config.ip
                     || (other.device.is_some()
@@ -104,6 +106,7 @@ impl Fleet {
         for config in &mut devices {
             config.source_path = None;
         }
+        let configured = fingerprint(&devices)?; // Also validates every credential once.
         Ok(Self(
             devices
                 .into_iter()
@@ -114,6 +117,7 @@ impl Fleet {
                     io_started: false,
                 })
                 .collect(),
+            configured,
         ))
     }
     fn wake_available(&self) -> bool {
@@ -126,6 +130,7 @@ impl Fleet {
                 .iter()
                 .all(|d| d.off_attempted.load(Ordering::Acquire))
     }
+    #[cfg(test)]
     fn clear_sessions(&mut self) {
         for device in &mut self.0 {
             device.session = None;
@@ -139,7 +144,9 @@ impl Fleet {
         }
     }
     fn fingerprint(&self) -> Result<Vec<u8>> {
-        fingerprint(&self.0.iter().map(|d| d.config.clone()).collect::<Vec<_>>())
+        // Runtime address recovery must not make an unchanged desktop export
+        // look like a new user configuration and restart power control.
+        Ok(self.1.clone())
     }
     fn save(&self) -> Result<()> {
         use std::io::Write;
@@ -171,20 +178,29 @@ impl Fleet {
                 sleep(work.delay).await;
                 device.io_started = true;
                 if matches!(work.kind, Kind::On) {
+                    anyhow::ensure!(!crate::lifecycle::is_ending(), "Windows session is ending");
                     device.off_attempted.store(false, Ordering::Release);
                 }
                 if matches!(work.kind, Kind::Off) && device.off_attempted.load(Ordering::Acquire) {
                     return Ok("off_requested".to_owned());
                 }
-                perform(
+                let result = perform(
                     work,
-                    &device.config,
+                    &mut device.config,
                     &mut device.session,
                     &mut journal,
                     &device.off_attempted,
                     &local_view,
+                    work.check_input && initial.keep_tv_on,
                 )
-                .await?;
+                .await;
+                if result.is_err() {
+                    device.session = None;
+                }
+                // Other devices may still be working when a new event arrives.
+                // A completed exchange no longer needs cancellation cleanup.
+                device.io_started = false;
+                result?;
                 Ok::<_, anyhow::Error>(snapshot(&local_view)?.power)
             }
         }))
@@ -209,16 +225,26 @@ impl Fleet {
         Ok(())
     }
     async fn idle_step(&mut self) -> Result<()> {
-        let waits = self
-            .0
-            .iter_mut()
-            .filter_map(|d| d.session.as_mut())
-            .map(|session| Box::pin(session.idle_step()))
-            .collect::<Vec<_>>();
-        if waits.is_empty() {
-            return std::future::pending().await;
+        let (result, index) = {
+            let waits = self
+                .0
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(index, d)| {
+                    d.session
+                        .as_mut()
+                        .map(|session| Box::pin(async move { (session.idle_step().await, index) }))
+                })
+                .collect::<Vec<_>>();
+            if waits.is_empty() {
+                return std::future::pending().await;
+            }
+            futures_util::future::select_all(waits).await.0
+        };
+        if result.is_err() {
+            self.0[index].session = None;
         }
-        Ok(futures_util::future::select_all(waits).await.0?)
+        Ok(result?)
     }
 }
 
@@ -238,19 +264,19 @@ fn fingerprint(devices: &[Config]) -> Result<Vec<u8>> {
     Ok(digest.finalize().to_vec())
 }
 impl Work {
+    fn same_operation(&self, other: &Self) -> bool {
+        self.kind == other.kind && (self.kind != Kind::Off || self.check_input == other.check_input)
+    }
     fn target(target: Target, urgent: bool) -> Self {
         Self {
+            check_input: true,
             kind: if target == Target::On {
                 Kind::On
             } else {
                 Kind::Off
             },
             urgent,
-            delay: if urgent || target == Target::On {
-                Duration::ZERO
-            } else {
-                Duration::from_millis(1200)
-            },
+            delay: Duration::ZERO,
             reply: None,
         }
     }
@@ -410,6 +436,7 @@ unsafe extern "system" fn control(
                 if bridge
                     .events
                     .send(Notice {
+                        preceding: None,
                         event,
                         suspend_ack: ack,
                     })
@@ -433,6 +460,7 @@ unsafe extern "system" fn network_changed(
 ) {
     if let Some(bridge) = BRIDGE.get() {
         let _ = bridge.events.send(Notice {
+            preceding: None,
             event: Event::NetworkChanged,
             suspend_ack: None,
         });
@@ -557,11 +585,19 @@ fn edit(view: &RwLock<Snapshot>, f: impl FnOnce(&mut Snapshot)) {
         SNAPSHOT_CHANGED.notify_waiters();
     }
 }
-fn reply(work: &mut Work, view: &RwLock<Snapshot>, error: Option<String>) {
-    if let Some(reply) = work.reply.take()
-        && let Ok(snapshot) = snapshot(view)
-    {
-        let _ = reply.send(Response { snapshot, error });
+fn reply(
+    work: &mut Work,
+    followers: Vec<oneshot::Sender<Response>>,
+    view: &RwLock<Snapshot>,
+    error: Option<String>,
+) {
+    for reply in work.reply.take().into_iter().chain(followers) {
+        if let Ok(snapshot) = snapshot(view) {
+            let _ = reply.send(Response {
+                snapshot,
+                error: error.clone(),
+            });
+        }
     }
 }
 fn save_settings(settings: &Settings) -> Result<()> {
@@ -590,15 +626,16 @@ fn current_target(state: &State) -> Target {
 
 async fn perform(
     work: &Work,
-    config: &Config,
+    config: &mut Config,
     cache: &mut Option<Session>,
     journal: &mut Journal,
     attempted: &AtomicBool,
     view: &RwLock<Snapshot>,
+    check_input: bool,
 ) -> Result<()> {
     match work.kind {
         Kind::On => {
-            // A brief display flicker must not send WoL to an already active TV.
+            // Reuse a healthy socket instead of waking an already active TV.
             let already_on = if let Some(session) = cache.as_mut() {
                 matches!(
                     timeout(Duration::from_millis(250), session.power_state()).await,
@@ -608,8 +645,11 @@ async fn perform(
                 false
             };
             if !already_on {
-                *cache =
-                    Some(controller::wake_session(config, journal, Duration::from_secs(90)).await?);
+                let (resolved, session) =
+                    controller::wake_session_resolved(config, journal, Duration::from_secs(90))
+                        .await?;
+                *config = resolved;
+                *cache = Some(session);
             }
             edit(view, |s| {
                 s.power = "on".into();
@@ -617,19 +657,31 @@ async fn perform(
             });
         }
         Kind::Off => {
+            if check_input && config.pc_hdmi.is_none() {
+                let _ = journal.record("off_skipped_input", json!({"reason":"pc_hdmi_not_set"}));
+                edit(view, |s| s.power = "unknown".into());
+                return Ok(());
+            }
             let off = async {
                 if cache.is_none() {
-                    *cache = Some(controller::paired_session(config).await?);
+                    let (resolved, session) = controller::paired_session_resolved(config).await?;
+                    *config = resolved;
+                    *cache = Some(session);
                 }
                 let session = cache.as_mut().context("Missing OFF session")?;
+                if check_input
+                    && !controller::protected_input_active(session, config, journal).await
+                {
+                    return Ok(false);
+                }
                 let evidence = session.power_off_tracked(Some(attempted)).await?;
                 let _ = journal.record(
                     "off_evidence",
                     json!({"response":evidence, "physical_state":"not_observed"}),
                 );
-                Ok::<_, anyhow::Error>(())
+                Ok::<_, anyhow::Error>(true)
             };
-            timeout(
+            let sent = timeout(
                 if work.urgent {
                     Duration::from_millis(1400)
                 } else {
@@ -638,17 +690,36 @@ async fn perform(
                 off,
             )
             .await
-            .context("OFF budget expired")??;
+            .context("OFF budget expired");
+            let sent = match sent {
+                Ok(Ok(sent)) => sent,
+                // Protected OFF never turns a failed input check into an OFF.
+                result if check_input && !attempted.load(Ordering::Acquire) => {
+                    let (reason, error) = match result {
+                        Err(error) => ("off_budget_expired", format!("{error:#}")),
+                        Ok(Err(error)) => ("connection_unavailable", format!("{error:#}")),
+                        Ok(Ok(_)) => unreachable!(),
+                    };
+                    let _ = journal.record(
+                        "off_skipped_input",
+                        json!({"ip":config.ip,"reason":reason,"error":error}),
+                    );
+                    false
+                }
+                result => result??,
+            };
             *cache = None;
             edit(view, |s| {
-                s.power = "off_requested".into();
+                s.power = if sent { "off_requested" } else { "unknown" }.into();
                 s.checked_at = Some(timestamp());
             });
         }
         Kind::Refresh => {
             let refresh = async {
                 if cache.is_none() {
-                    *cache = Some(controller::paired_session(config).await?);
+                    let (resolved, session) = controller::paired_session_resolved(config).await?;
+                    *config = resolved;
+                    *cache = Some(session);
                 }
                 let power = cache
                     .as_mut()
@@ -681,16 +752,16 @@ fn event_work(
     automatic: bool,
     view: &RwLock<Snapshot>,
 ) -> (Option<Work>, Option<std::sync::mpsc::SyncSender<()>>) {
-    let target = state.apply(notice.event);
+    let target = state.apply_notice(&notice);
     let work = if automatic {
-        if notice.event == Event::Suspend {
+        if matches!(notice.event, Event::Suspend | Event::SessionEnding) {
             Some(Work::target(Target::Off, true))
         } else if notice.event == Event::NetworkChanged
             && snapshot(view).is_ok_and(|s| s.power == "unknown")
         {
             None
         } else {
-            target.map(|target| Work::target(target, false))
+            target.map(|target| Work::target(target, state.is_ending()))
         }
     } else {
         None
@@ -707,7 +778,7 @@ fn command_work(
     let Envelope { request, reply } = envelope;
     let kind = match request {
         Request::On => Kind::On,
-        Request::Off => Kind::Off,
+        Request::Off | Request::Sleep => Kind::Off,
         Request::Refresh if !active => Kind::Refresh,
         Request::Automatic { enabled } => {
             let previous = settings.automatic;
@@ -723,6 +794,19 @@ fn command_work(
             // A disabled auto policy cancels its current operation below.
             return None;
         }
+        Request::KeepTvOn { enabled } => {
+            let previous = settings.keep_tv_on;
+            settings.keep_tv_on = enabled;
+            let error = save_settings(settings).err().map(|e| format!("{e:#}"));
+            if error.is_some() {
+                settings.keep_tv_on = previous;
+            }
+            edit(view, |s| s.keep_tv_on = settings.keep_tv_on);
+            if let Ok(snapshot) = snapshot(view) {
+                let _ = reply.send(Response { snapshot, error });
+            }
+            return None;
+        }
         _ => {
             if let Ok(snapshot) = snapshot(view) {
                 let _ = reply.send(Response {
@@ -735,6 +819,7 @@ fn command_work(
     };
     Some(Work {
         kind,
+        check_input: matches!(request, Request::Sleep),
         urgent: false,
         delay: Duration::ZERO,
         reply: Some(reply),
@@ -772,11 +857,12 @@ async fn run() -> Result<()> {
     let view = Arc::new(RwLock::new(Snapshot {
         power: "unknown".into(),
         automatic: settings.automatic,
+        keep_tv_on: settings.keep_tv_on,
         busy: false,
         checked_at: None,
         error: None,
     }));
-    let (events_tx, mut events) = mpsc::unbounded_channel();
+    let (events_tx, mut events) = crate::sync::notice_channel();
     let (stop_tx, mut stop) = watch::channel(0);
     BRIDGE
         .set(Bridge {
@@ -850,7 +936,6 @@ async fn run() -> Result<()> {
                     !settings.automatic || next.wake_available(),
                     "기기 정보에서 MAC 주소를 확인해주세요."
                 );
-                next.save()?;
                 Ok(next)
             });
             let error = match result {
@@ -859,6 +944,13 @@ async fn run() -> Result<()> {
                         let _ = envelope.reply.send(Response {
                             snapshot: snapshot(&view)?,
                             error: None,
+                        });
+                        continue;
+                    }
+                    if let Err(error) = next.save() {
+                        let _ = envelope.reply.send(Response {
+                            snapshot: snapshot(&view)?,
+                            error: Some(format!("{error:#}")),
                         });
                         continue;
                     }
@@ -913,6 +1005,7 @@ async fn run() -> Result<()> {
             let fleet_empty = fleet.0.is_empty();
             let wake_available = fleet.wake_available();
             let active_fingerprint = fleet.fingerprint()?;
+            let mut followers = Vec::new();
             let completed = {
                 let operation = fleet.perform(&current, &action_log, &view);
                 tokio::pin!(operation);
@@ -948,13 +1041,22 @@ async fn run() -> Result<()> {
                                 let _ = envelope.reply.send(Response { snapshot: snapshot(&view)?, error: Some("기기 정보에서 MAC 주소를 확인해주세요.".into()) });
                                 continue;
                             }
-                            match envelope.request { Request::On => state.set_desired(Target::On), Request::Off => state.set_desired(Target::Off), _ => {} }
+                            match envelope.request { Request::On => state.set_desired(Target::On), Request::Off | Request::Sleep => state.set_desired(Target::Off), _ => {} }
                             let was_auto = settings.automatic;
-                            let next = command_work(envelope, &mut settings, &view, true);
+                            let was_protected = settings.keep_tv_on;
+                            let mut next = command_work(envelope, &mut settings, &view, true);
+                            if next.as_ref().is_some_and(|next| current.same_operation(next)) {
+                                if let Some(reply) = next.take().and_then(|next| next.reply) { followers.push(reply); }
+                                continue;
+                            }
                             if !was_auto && settings.automatic && !fleet_empty {
                                 let target = current_target(&state);
                                 state.set_desired(target);
                                 work = Some(Work::target(target, true));
+                                break None;
+                            }
+                            if was_protected != settings.keep_tv_on && current.check_input && matches!(current.kind, Kind::Off) {
+                                work = Some(Work::target(Target::Off, current.urgent));
                                 break None;
                             }
                             if next.is_some() || (is_auto && was_auto && !settings.automatic) { work = next; break None; }
@@ -972,7 +1074,6 @@ async fn run() -> Result<()> {
                 let error = result.err().map(|e| format!("{e:#}"));
                 let _ = journal.record("service_action_finished", json!({"success":error.is_none(), "error":error, "off_may_have_been_sent":off_attempted}));
                 if error.is_some() {
-                    fleet.clear_sessions();
                     edit(&view, |s| {
                         s.power = "unknown".into();
                         s.error = error.clone();
@@ -986,6 +1087,7 @@ async fn run() -> Result<()> {
                         repair_attempts += 1;
                         work = Some(Work {
                             kind: Kind::Refresh,
+                            check_input: false,
                             urgent: false,
                             delay: Duration::from_secs(u64::from(repair_attempts)),
                             reply: None,
@@ -994,7 +1096,7 @@ async fn run() -> Result<()> {
                 } else if matches!(current.kind, Kind::On | Kind::Refresh) {
                     repair_attempts = 0;
                 }
-                reply(&mut current, &view, error);
+                reply(&mut current, followers, &view, error);
             } else {
                 edit(&view, |s| {
                     s.power = if off_attempted {
@@ -1006,11 +1108,11 @@ async fn run() -> Result<()> {
                 });
                 reply(
                     &mut current,
+                    followers,
                     &view,
                     Some("Request superseded by a newer power event".into()),
                 );
-                // An OFF cancelled during debounce has not touched its socket.
-                // Keep that connection for the returning ON check without WoL.
+                // Preserve sockets for work cancelled before its I/O started.
                 fleet.cancel_sessions();
             }
             continue;
@@ -1038,7 +1140,7 @@ async fn run() -> Result<()> {
                     let _ = envelope.reply.send(Response { snapshot: snapshot(&view)?, error: Some("기기 정보에서 MAC 주소를 확인해주세요.".into()) });
                     continue;
                 }
-                match envelope.request { Request::On => state.set_desired(Target::On), Request::Off => state.set_desired(Target::Off), _ => {} }
+                match envelope.request { Request::On => state.set_desired(Target::On), Request::Off | Request::Sleep => state.set_desired(Target::Off), _ => {} }
                 let was_auto = settings.automatic;
                 work = command_work(envelope, &mut settings, &view, false);
                 if !was_auto && settings.automatic && !fleet.0.is_empty() {
@@ -1052,11 +1154,11 @@ async fn run() -> Result<()> {
             }
             result = fleet.idle_step() => {
                 if let Err(error) = result {
-                    fleet.clear_sessions(); edit(&view, |s| s.power = "unknown".into());
+                    edit(&view, |s| s.power = "unknown".into());
                     let _ = journal.record("idle_connection_closed", json!({"error":error.to_string()}));
                     if settings.automatic && state.desired_target() == Some(Target::On) {
                         repair_attempts = 1;
-                        work = Some(Work { kind: Kind::Refresh, urgent: false, delay: Duration::from_millis(250), reply: None });
+                        work = Some(Work { kind: Kind::Refresh, check_input: false, urgent: false, delay: Duration::from_millis(250), reply: None });
                     }
                 }
             }
@@ -1070,6 +1172,7 @@ async fn run() -> Result<()> {
     if reason != SERVICE_CONTROL_STOP && settings.automatic && !fleet.all_off_attempted() {
         let work = Work {
             kind: Kind::Off,
+            check_input: true,
             urgent: false,
             delay: Duration::ZERO,
             reply: None,
@@ -1095,6 +1198,121 @@ mod tests {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
 
+    #[tokio::test]
+    async fn completed_tv_connection_survives_another_tvs_cancelled_query() {
+        let (healthy, mut peer) = crate::ssap::tests::peer().await;
+        let (stalled, _stalled_peer) = crate::ssap::tests::peer().await;
+        let remote = tokio::spawn(async move {
+            let frame = peer.next().await.unwrap().unwrap();
+            let frame: serde_json::Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+            assert_eq!(frame["uri"], crate::ssap::POWER_STATE);
+            peer.send(Message::Text(
+                json!({"id":frame["id"],"type":"response","payload":{"state":"Active"}})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+            peer
+        });
+        let mut fleet = Fleet::new(vec![config(1), config(2)]).unwrap();
+        fleet.0[0].session = Some(healthy);
+        fleet.0[1].session = Some(stalled);
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::open(&dir.path().join("events.jsonl")).unwrap();
+        let refresh = Work {
+            kind: Kind::Refresh,
+            check_input: false,
+            urgent: false,
+            delay: Duration::ZERO,
+            reply: None,
+        };
+        assert!(
+            timeout(
+                Duration::from_millis(100),
+                fleet.perform(&refresh, &journal, &view())
+            )
+            .await
+            .is_err()
+        );
+        let _peer = remote.await.unwrap();
+        fleet.cancel_sessions();
+        assert!(fleet.0[0].session.is_some());
+        assert!(fleet.0[1].session.is_none());
+    }
+
+    #[tokio::test]
+    async fn duplicate_commands_share_results_but_different_off_policies_do_not_merge() {
+        let mut current = Work::target(Target::On, false);
+        let mut duplicate = Work::target(Target::On, false);
+        duplicate.check_input = false;
+        assert!(current.same_operation(&duplicate));
+        assert_eq!(Work::target(Target::Off, false).delay, Duration::ZERO);
+        current.kind = Kind::Off;
+        duplicate.kind = Kind::Off;
+        assert!(!current.same_operation(&duplicate));
+        let (first, first_result) = oneshot::channel();
+        let (second, second_result) = oneshot::channel();
+        current.reply = Some(first);
+        reply(
+            &mut current,
+            vec![second],
+            &view(),
+            Some("cancelled".into()),
+        );
+        assert_eq!(
+            first_result.await.unwrap().error.as_deref(),
+            Some("cancelled")
+        );
+        assert_eq!(
+            second_result.await.unwrap().error.as_deref(),
+            Some("cancelled")
+        );
+    }
+
+    #[test]
+    fn runtime_address_recovery_does_not_restart_an_identical_configuration() {
+        let configured = config(1);
+        let expected = fingerprint(std::slice::from_ref(&configured)).unwrap();
+        let mut fleet = Fleet::new(vec![configured.clone()]).unwrap();
+        fleet.0[0].config.ip = "127.0.0.9".parse().unwrap();
+        assert_eq!(fleet.fingerprint().unwrap(), expected);
+        let mut changed = configured;
+        changed.set_manual_hdmi(4);
+        assert_ne!(fingerprint(&[changed]).unwrap(), expected);
+    }
+
+    #[tokio::test]
+    async fn hdmi_protection_disabled_preserves_existing_off_policy() {
+        let (session, mut peer) = crate::ssap::tests::peer().await;
+        let remote = tokio::spawn(async move {
+            let frame = peer.next().await.unwrap().unwrap();
+            let frame: serde_json::Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+            // No identity or foreground request is required with protection OFF.
+            assert_eq!(frame["uri"], crate::ssap::POWER_OFF);
+            peer.send(Message::Text(
+                json!({"id":frame["id"],"type":"response","payload":{"returnValue":true}})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        });
+        let mut fleet = Fleet::new(vec![config(1)]).unwrap();
+        fleet.0[0].session = Some(session);
+        let directory = tempfile::tempdir().unwrap();
+        let journal = Journal::open(&directory.path().join("test.jsonl")).unwrap();
+        fleet
+            .perform(&Work::target(Target::Off, true), &journal, &view())
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(1), remote)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(fleet.all_off_attempted());
+    }
+
     fn config(last: u8) -> Config {
         let mut config = Config {
             ip: std::net::Ipv4Addr::new(127, 0, 0, last),
@@ -1104,6 +1322,8 @@ mod tests {
             device: None,
             source_path: None,
             wake_verified: false,
+            pc_hdmi: None,
+            pc_hdmi_source: Default::default(),
             protected_key: None,
             certificate_sha256: None,
         };
@@ -1114,10 +1334,196 @@ mod tests {
         RwLock::new(Snapshot {
             power: "unknown".into(),
             automatic: true,
+            keep_tv_on: false,
             busy: false,
             checked_at: None,
             error: None,
         })
+    }
+
+    #[test]
+    fn legacy_service_policy_defaults_to_input_protection_off() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"owner_sid":"test","automatic":true}"#).unwrap();
+        assert!(!settings.keep_tv_on);
+    }
+
+    #[tokio::test]
+    async fn hdmi_protection_compares_saved_port_and_retries_only_errors() {
+        for source in [
+            crate::hdmi::InputSource::Automatic,
+            crate::hdmi::InputSource::Manual,
+            crate::hdmi::InputSource::Legacy,
+        ] {
+            for (payloads, should_off) in [
+                (
+                    vec![json!({"appId":"com.webos.app.hdmi2","returnValue":true})],
+                    true,
+                ),
+                (
+                    vec![json!({"appId":"com.webos.app.hdmi1","returnValue":true})],
+                    false,
+                ),
+                (vec![json!({"appId":"netflix","returnValue":true})], false),
+                (
+                    vec![json!({"appId":"youtube.leanback.v4","returnValue":true})],
+                    false,
+                ),
+                (
+                    vec![json!({"appId":"com.webos.app.hdmi20","returnValue":true})],
+                    false,
+                ),
+                (
+                    vec![
+                        json!({"returnValue":false}),
+                        json!({"appId":"com.webos.app.hdmi2","returnValue":true}),
+                    ],
+                    true,
+                ),
+                (
+                    vec![json!({"returnValue":true}), json!({"returnValue":true})],
+                    false,
+                ),
+            ] {
+                let (session, mut peer) = crate::ssap::tests::peer().await;
+                let remote = tokio::spawn(async move {
+                    for payload in payloads {
+                        let frame = peer.next().await.unwrap().unwrap();
+                        let frame: serde_json::Value =
+                            serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                        assert_eq!(frame["uri"], crate::ssap::FOREGROUND_APP);
+                        peer.send(Message::Text(
+                            json!({"id":frame["id"],"type":"response","payload":payload})
+                                .to_string()
+                                .into(),
+                        ))
+                        .await
+                        .unwrap();
+                    }
+                    if should_off {
+                        let frame = peer.next().await.unwrap().unwrap();
+                        let frame: serde_json::Value =
+                            serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                        assert_eq!(frame["uri"], crate::ssap::POWER_OFF);
+                        peer.send(Message::Text(json!({"id":frame["id"],"type":"response","payload":{"returnValue":true}}).to_string().into())).await.unwrap();
+                    }
+                    while let Some(Ok(frame)) = peer.next().await {
+                        assert!(!frame.is_text(), "Unexpected extra query or OFF");
+                    }
+                });
+                let mut config = config(1);
+                config.pc_hdmi = Some(2);
+                config.pc_hdmi_source = source;
+                let mut fleet = Fleet::new(vec![config]).unwrap();
+                fleet.0[0].session = Some(session);
+                let view = view();
+                edit(&view, |s| s.keep_tv_on = true);
+                let dir = tempfile::tempdir().unwrap();
+                let log = dir.path().join("test.jsonl");
+                let journal = Journal::open(&log).unwrap();
+                fleet
+                    .perform(&Work::target(Target::Off, true), &journal, &view)
+                    .await
+                    .unwrap();
+                assert_eq!(fleet.all_off_attempted(), should_off);
+                fleet.clear_sessions();
+                timeout(Duration::from_secs(1), remote)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let events = std::fs::read_to_string(log).unwrap();
+                assert!(events.contains(if should_off {
+                    "off_input_verified"
+                } else {
+                    "off_skipped_input"
+                }));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn hdmi_timeout_retries_once_and_missing_port_skips_off() {
+        for pc_hdmi in [Some(2), None] {
+            let (session, mut peer) = crate::ssap::tests::peer().await;
+            let remote = tokio::spawn(async move {
+                let mut queries = 0;
+                while let Some(Ok(frame)) = peer.next().await {
+                    if !frame.is_text() {
+                        continue;
+                    }
+                    let frame: serde_json::Value =
+                        serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                    assert_eq!(frame["uri"], crate::ssap::FOREGROUND_APP);
+                    queries += 1;
+                }
+                assert_eq!(queries, if pc_hdmi.is_some() { 2 } else { 0 });
+            });
+            let mut config = config(1);
+            config.pc_hdmi = pc_hdmi;
+            config.pc_hdmi_source = crate::hdmi::InputSource::Automatic;
+            let mut fleet = Fleet::new(vec![config]).unwrap();
+            fleet.0[0].session = Some(session);
+            let view = view();
+            edit(&view, |s| s.keep_tv_on = true);
+            let dir = tempfile::tempdir().unwrap();
+            let log = dir.path().join("test.jsonl");
+            let journal = Journal::open(&log).unwrap();
+            fleet
+                .perform(&Work::target(Target::Off, true), &journal, &view)
+                .await
+                .unwrap();
+            assert!(!fleet.all_off_attempted());
+            fleet.clear_sessions();
+            timeout(Duration::from_secs(1), remote)
+                .await
+                .unwrap()
+                .unwrap();
+            let events = std::fs::read_to_string(log).unwrap();
+            assert!(events.contains(if pc_hdmi.is_some() {
+                "input_timeout"
+            } else {
+                "pc_hdmi_not_set"
+            }));
+        }
+    }
+
+    #[tokio::test]
+    async fn each_tv_uses_its_own_pc_hdmi_input() {
+        let mut fleet = Fleet::new(vec![config(1), config(2)]).unwrap();
+        let mut remotes = Vec::new();
+        for (index, device) in fleet.0.iter_mut().enumerate() {
+            let (session, mut peer) = crate::ssap::tests::peer().await;
+            device.session = Some(session);
+            device.config.set_manual_hdmi(index as u8 + 1);
+            remotes.push(tokio::spawn(async move {
+                let frame = peer.next().await.unwrap().unwrap();
+                let frame: serde_json::Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                assert_eq!(frame["uri"], crate::ssap::FOREGROUND_APP);
+                peer.send(Message::Text(json!({"id":frame["id"],"type":"response","payload":{"appId":"com.webos.app.hdmi1","returnValue":true}}).to_string().into())).await.unwrap();
+                if index == 0 {
+                    let frame = peer.next().await.unwrap().unwrap();
+                    let frame: serde_json::Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                    assert_eq!(frame["uri"], crate::ssap::POWER_OFF);
+                    peer.send(Message::Text(json!({"id":frame["id"],"type":"response","payload":{"returnValue":true}}).to_string().into())).await.unwrap();
+                } else {
+                    while let Some(Ok(frame)) = peer.next().await { assert!(!frame.is_text()); }
+                }
+            }));
+        }
+        let view = view();
+        edit(&view, |s| s.keep_tv_on = true);
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::open(&dir.path().join("test.jsonl")).unwrap();
+        fleet
+            .perform(&Work::target(Target::Off, true), &journal, &view)
+            .await
+            .unwrap();
+        for remote in remotes {
+            remote.await.unwrap();
+        }
+        assert!(fleet.0[0].off_attempted.load(Ordering::Acquire));
+        assert!(!fleet.0[1].off_attempted.load(Ordering::Acquire));
+        assert_eq!(snapshot(&view).unwrap().power, "unknown");
     }
 
     #[test]
@@ -1147,7 +1553,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_display_off_keeps_connection_and_active_on_sends_no_wol() {
+    async fn cancelled_pending_work_keeps_connection_and_active_on_sends_no_wol() {
         let (session, mut peer) = crate::ssap::tests::peer().await;
         let mut fleet = Fleet::new(vec![config(1)]).unwrap();
         fleet.0[0].session = Some(session);
@@ -1155,10 +1561,12 @@ mod tests {
         let path = dir.path().join("test.jsonl");
         let journal = Journal::open(&path).unwrap();
         let view = view();
+        let mut pending = Work::target(Target::Off, false);
+        pending.delay = Duration::from_secs(1);
         assert!(
             timeout(
                 Duration::from_millis(20),
-                fleet.perform(&Work::target(Target::Off, false), &journal, &view)
+                fleet.perform(&pending, &journal, &view)
             )
             .await
             .is_err()
@@ -1228,11 +1636,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let journal = Journal::open(&dir.path().join("test.jsonl")).unwrap();
         let view = view();
-        let off = Work::target(Target::Off, true);
-        timeout(Duration::from_secs(2), fleet.perform(&off, &journal, &view))
-            .await
-            .unwrap()
-            .unwrap();
+        let off = Work::target(Target::Off, false);
+        timeout(
+            Duration::from_millis(300),
+            fleet.perform(&off, &journal, &view),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         slow.await.unwrap();
         fast.await.unwrap();
         assert!(fleet.all_off_attempted());
@@ -1285,6 +1696,8 @@ mod tests {
                 .unwrap()
                 .is_err()
         );
+        assert!(fleet.0[0].session.is_some());
+        assert!(fleet.0[1].session.is_none());
     }
 
     #[test]
@@ -1293,6 +1706,7 @@ mod tests {
         let mut state = State::default();
         let (work, _) = event_work(
             Notice {
+                preceding: None,
                 event: Event::DisplayOn,
                 suspend_ack: None,
             },
@@ -1304,6 +1718,7 @@ mod tests {
         state.apply(Event::Suspend);
         let (work, _) = event_work(
             Notice {
+                preceding: None,
                 event: Event::ResumeAutomatic,
                 suspend_ack: None,
             },
@@ -1314,6 +1729,7 @@ mod tests {
         assert!(work.is_none());
         let (work, _) = event_work(
             Notice {
+                preceding: None,
                 event: Event::ResumeInteractive,
                 suspend_ack: None,
             },

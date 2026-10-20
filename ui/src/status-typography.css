@@ -1,0 +1,5 @@
+/* Only the emphasized checking/installing and shortcut-capture labels opt in.
+   Normal button labels continue to use the shared typography weights. */
+:root :is(#check-update, #shortcut) {
+  --font-weight-status-emphasis: 500;
+}

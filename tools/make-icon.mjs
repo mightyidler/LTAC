@@ -4,8 +4,8 @@ import sharp from 'sharp';
 
 // The supplied PNG is the canonical, byte-for-byte original. Never regenerate
 // it from a smaller icon. Optional argument imports a replacement original.
-const source = resolve('src-tauri/icons/icon.png');
-mkdirSync('src-tauri/icons', { recursive: true });
+const source = resolve('resources/icons/app/icon.png');
+mkdirSync('resources/icons/app', { recursive: true });
 if (process.argv[2] && resolve(process.argv[2]) !== source) copyFileSync(process.argv[2], source);
 const original = readFileSync(source);
 const metadata = await sharp(original).metadata();
@@ -37,7 +37,8 @@ frames.forEach((data, index) => {
   offset += data.length;
 });
 const ico = Buffer.concat([directory, ...frames]);
-writeFileSync('src-tauri/icons/icon.ico', ico);
-writeFileSync('ui/public/favicon.ico', ico);
-writeFileSync('ui/public/app-icon.png', await resize(512));
+writeFileSync('resources/icons/app/icon.ico', ico);
+mkdirSync('resources/public/icons/app', { recursive: true });
+writeFileSync('resources/public/icons/app/favicon.ico', ico);
+writeFileSync('resources/public/icons/app/app-icon.png', await resize(512));
 console.log(`Original ${metadata.width}×${metadata.height} preserved; ${sizes.length} RGBA PNG icon entries generated from the original.`);

@@ -2,6 +2,14 @@ let language: 'ko' | 'en' | 'ja' = 'ko';
 export function setTranslationLanguage(value: 'ko' | 'en' | 'ja') { language = value; }
 
 export const messages = {
+  "HDMI 선택": {
+    "en": "Select HDMI",
+    "ja": "HDMIを選択"
+  },
+  "연결 HDMI": {
+    "en": "HDMI input",
+    "ja": "HDMI入力"
+  },
   "기기 추가": {
     "en": "Add device",
     "ja": "デバイスを追加"
@@ -141,6 +149,14 @@ export const messages = {
   "절전 단축키": {
     "en": "Sleep shortcut",
     "ja": "スリープショートカット"
+  },
+  "TV 단독 사용 시 전원 유지": {
+    "en": "Keep TV on during other use",
+    "ja": "TV単独使用時は電源を維持"
+  },
+  "PC가 아닌 TV 화면을 사용 중일 때는 TV를 끄지 않습니다": {
+    "en": "Keep your TV on while using apps or another input",
+    "ja": "アプリや他の入力を使用中はTVをオフにしません"
   },
   "PC와 TV를 함께 절전 상태로 전환합니다": {
     "en": "Put your PC and TV to sleep together",

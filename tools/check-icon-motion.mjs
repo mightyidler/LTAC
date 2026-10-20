@@ -40,7 +40,7 @@ try {
   server = await preview(config);
   browser = await chromium.launch({ channel: 'msedge', headless: true });
   for (const deviceScaleFactor of (process.env.LTAC_ICON_SCALE ? [Number(process.env.LTAC_ICON_SCALE)] : [1, 1.25, 1.5, 1.75, 2])) {
-    const page = await browser.newPage({ viewport: { width: 520, height: 650 }, deviceScaleFactor });
+    const page = await browser.newPage({ viewport: { width: 520, height: 650 }, deviceScaleFactor, colorScheme:'dark' });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto('http://127.0.0.1:1422');
@@ -57,7 +57,7 @@ try {
         assert.equal(edge.outline, 'none');
       }
     }
-    await insetEdges(['.shortcut-button', '.device-menu', '.app-toast']);
+    await insetEdges(['.shortcut-button', '.device-menu:not(.hdmi-menu)', '.app-toast']);
 
     async function press(selector, surface = selector, raster = false) {
       const button = page.locator(selector).first();
@@ -128,16 +128,16 @@ try {
       const trace = await action.release(true);
       centered(trace, selector); scalesTogether(trace, selector);
     }
-    const more = await press('.more-button', '.device-menu');
+    const more = await press('.more-button', '.device-menu:not(.hdmi-menu)');
     centered(await more.release(true), 'more press / cancelled release');
     assert.ok(more.held.width < 23, 'The whole More surface must shrink while held');
-    assert.equal(await page.locator('.device-menu').getAttribute('data-open'), 'false');
-    const open = await press('.more-button', '.device-menu');
+    assert.equal(await page.locator('.device-menu:not(.hdmi-menu)').getAttribute('data-open'), 'false');
+    const open = await press('.more-button', '.device-menu:not(.hdmi-menu)');
     await open.release();
-    assert.equal(await page.locator('.device-menu').getAttribute('data-open'), 'true');
+    assert.equal(await page.locator('.device-menu:not(.hdmi-menu)').getAttribute('data-open'), 'true');
     assert.equal(await page.locator('.more-button').getAttribute('aria-expanded'), 'true');
-    assert.equal(await page.locator('[role=menu]').evaluate(node => node.inert), false);
-    const backgrounds = () => page.locator('.device-menu [role=menuitem]').evaluateAll(items => items.map(item => getComputedStyle(item).backgroundColor));
+    assert.equal(await page.locator('.device-menu:not(.hdmi-menu) [role=menu]').evaluate(node => node.inert), false);
+    const backgrounds = () => page.locator('.device-menu:not(.hdmi-menu) [role=menuitem]').evaluateAll(items => items.map(item => getComputedStyle(item).backgroundColor));
     const settledBackgrounds = async expected => {
       const deadline = Date.now() + 5000;
       while (Date.now() < deadline) { if (JSON.stringify(await backgrounds()) === JSON.stringify(expected)) return; await page.waitForTimeout(50); }
@@ -147,7 +147,7 @@ try {
     await settledBackgrounds(['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)']);
     assert.deepEqual(await backgrounds(), ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)'], 'Neither menu action is highlighted by default');
     for (const [index, action] of ['edit', 'remove'].entries()) {
-      await page.locator(`.device-menu [data-action="${action}"]`).hover(); await page.waitForTimeout(200);
+      await page.locator(`.device-menu:not(.hdmi-menu) [data-action="${action}"]`).hover(); await page.waitForTimeout(200);
       await settledBackgrounds(index === 0 ? ['rgba(255, 255, 255, 0.04)', 'rgba(0, 0, 0, 0)'] : ['rgba(0, 0, 0, 0)', 'rgba(255, 255, 255, 0.04)']);
       const colors = await backgrounds();
       assert.equal(colors[index], 'rgba(255, 255, 255, 0.04)', 'Only the hovered action is highlighted');
@@ -156,18 +156,18 @@ try {
       await settledBackgrounds(['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)']);
       assert.deepEqual(await backgrounds(), ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)'], 'Leaving the action clears its highlight');
     }
-    const expanded = await page.locator('.device-menu').boundingBox();
-    assert.ok(Math.abs(expanded.width - 140) < .05 && Math.abs(expanded.height - 80) < .05);
-    const menuStyle = await page.locator('.device-menu').evaluate(node => {
+    const expanded = await page.locator('.device-menu:not(.hdmi-menu)').boundingBox();
+    assert.ok(Math.abs(expanded.width - 140) < .05 && Math.abs(expanded.height - 84) < .05);
+    const menuStyle = await page.locator('.device-menu:not(.hdmi-menu)').evaluate(node => {
       const panel = getComputedStyle(node), content = getComputedStyle(node.querySelector('.t-morph-menu'));
       return { radius:panel.borderRadius, blur:panel.backdropFilter, padding:content.padding, rowGap:content.gap, rows:[...node.querySelectorAll('[role=menuitem]')].map(item => {
         const style = getComputedStyle(item), icon = item.querySelector('svg').getBoundingClientRect(), text = item.querySelector('span').getBoundingClientRect(), box = item.getBoundingClientRect();
         return { radius:style.borderRadius, weight:style.fontWeight, gap:style.gap, paddingY:style.paddingTop, height:box.height, iconInset:icon.x - box.x, textGap:text.x - icon.right };
       }) };
     });
-    assert.equal(menuStyle.radius, '23px'); assert.equal(menuStyle.blur, 'blur(24px)'); assert.equal(menuStyle.padding, '4px'); assert.equal(menuStyle.rowGap, '0px');
+    assert.equal(menuStyle.radius, '23px'); assert.equal(menuStyle.blur, 'blur(24px)'); assert.equal(menuStyle.padding, '4px'); assert.equal(menuStyle.rowGap, '4px');
     for (const row of menuStyle.rows) { assert.equal(row.radius, '18px'); assert.equal(row.weight, '400'); assert.equal(row.gap, '8px'); assert.equal(row.paddingY, '10px'); assert.equal(row.height, 36); assert.ok(Math.abs(row.iconInset - 10) < .05); assert.ok(Math.abs(row.textGap - 8) < .05); }
-    const itemPress = await press('.device-menu [data-action="edit"]');
+    const itemPress = await press('.device-menu:not(.hdmi-menu) [data-action="edit"]');
     assert.equal((await backgrounds())[0], 'rgba(255, 255, 255, 0.04)', 'Pressed action is highlighted');
     scalesTogether(await page.evaluate(() => window.iconTrace), 'menu item', false);
     await itemPress.release(true);
@@ -178,7 +178,7 @@ try {
     if (deviceScaleFactor === 1) await page.locator('#app').screenshot({ path:fileURLToPath(new URL('../local/icons-menu-after.png', import.meta.url)) });
     await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
-    centered(await (await press('.more-button', '.device-menu')).release(true), 'more after close');
+    centered(await (await press('.more-button', '.device-menu:not(.hdmi-menu)')).release(true), 'more after close');
 
     await page.locator('#navigation').click();
     await page.waitForSelector('#refresh');
@@ -216,9 +216,9 @@ try {
   const reduced = await browser.newPage({ reducedMotion: 'reduce' });
   await reduced.goto('http://127.0.0.1:1422');
   await reduced.locator('.more-button').click();
-  assert.equal(await reduced.locator('.device-menu').getAttribute('data-open'), 'true');
+  assert.equal(await reduced.locator('.device-menu:not(.hdmi-menu)').getAttribute('data-open'), 'true');
   await reduced.keyboard.press('Escape');
-  assert.equal(await reduced.locator('.device-menu').getAttribute('data-open'), 'false');
+  assert.equal(await reduced.locator('.device-menu:not(.hdmi-menu)').getAttribute('data-open'), 'false');
   console.log('Reduced motion: More opens and closes successfully.');
   const empty = await browser.newPage();
   await empty.goto('http://127.0.0.1:1422/?empty');

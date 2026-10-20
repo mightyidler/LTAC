@@ -126,21 +126,28 @@ pub async fn pair_device(
         broadcast: device.broadcast,
         transport: Transport::Auto,
         wake_verified: false,
+        pc_hdmi: None,
+        pc_hdmi_source: Default::default(),
         protected_key: None,
         certificate_sha256: None,
     };
-    if !reset && let Some(old) = old {
-        config.protected_key = old.protected_key;
-        config.certificate_sha256 = old.certificate_sha256;
-        config.transport = old.transport;
-        config.mac = old.mac;
-        config.wake_verified = old.wake_verified;
+    if let Some(old) = old {
+        if !reset {
+            config.protected_key = old.protected_key;
+            config.certificate_sha256 = old.certificate_sha256;
+            config.transport = old.transport;
+            config.mac = old.mac;
+            config.wake_verified = old.wake_verified;
+        }
+        // Resetting authentication does not reset a user's input choice.
+        config.pc_hdmi = old.pc_hdmi;
+        config.pc_hdmi_source = old.pc_hdmi_source;
     }
     pair_and_save(config, path, journal).await
 }
 
 pub async fn pair_manual(ip: Ipv4Addr, path: &Path, journal: &mut Journal) -> Result<Config> {
-    let config = Config {
+    let mut config = Config {
         source_path: Some(path.to_owned()),
         ip,
         mac: None,
@@ -148,9 +155,17 @@ pub async fn pair_manual(ip: Ipv4Addr, path: &Path, journal: &mut Journal) -> Re
         broadcast: discovery::routed_broadcast(ip)?,
         transport: Transport::Auto,
         wake_verified: false,
+        pc_hdmi: None,
+        pc_hdmi_source: Default::default(),
         protected_key: None,
         certificate_sha256: None,
     };
+    if let Ok(previous) = Config::load(path)
+        && previous.ip == ip
+    {
+        config.pc_hdmi = previous.pc_hdmi;
+        config.pc_hdmi_source = previous.pc_hdmi_source;
+    }
     config.validate()?;
     pair_and_save(config, path, journal).await
 }
@@ -185,6 +200,16 @@ async fn pair_and_save(mut config: Config, path: &Path, journal: &mut Journal) -
     config.mac = detected;
     config.set_key(&key)?;
     config.certificate_sha256 = session.certificate_sha256.clone();
+    if !config.hdmi_selection_pinned() {
+        let detected = crate::hdmi::capture().detect();
+        let _ = journal.record(
+            "pc_hdmi_detection",
+            json!({
+                "ip":config.ip,"port":detected.as_ref().ok(),"reason":detected.as_ref().err()
+            }),
+        );
+        config.apply_hdmi_detection(detected.ok());
+    }
     config.save(path)?;
     journal.record("connection_saved", json!({"device":config.device, "ip":config.ip, "mac_available":config.mac.is_some(), "state":power, "wake_verified":config.wake_verified}))?;
     Ok(config)
@@ -222,7 +247,9 @@ pub async fn recover(config: &Config) -> Result<(Config, Session)> {
     if mac != candidate.mac {
         candidate.wake_verified = false;
     }
-    candidate.mac = mac;
+    // A transient getinfo/neighbor failure must not erase the last known wake
+    // address. A newly observed interface still replaces it and clears proof.
+    candidate.mac = mac.or(candidate.mac);
     if let Some(path) = &candidate.source_path {
         candidate.save(path)?;
     }

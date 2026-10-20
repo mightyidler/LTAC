@@ -78,13 +78,15 @@ pub enum Request {
     Refresh,
     On,
     Off,
+    Sleep,
     Automatic { enabled: bool },
+    KeepTvOn { enabled: bool },
     Configure { devices: Vec<crate::config::Config> },
 }
 
 pub async fn subscribe(mut observe: impl FnMut(Snapshot)) -> Result<()> {
     use tokio::io::AsyncReadExt;
-    let mut pipe = open_verified()?;
+    let mut pipe = open_when_ready(open_verified).await?;
     pipe.write_all(b"{\"command\":\"subscribe\"}\n").await?;
     let mut reader = BufReader::new(pipe);
     loop {
@@ -100,6 +102,8 @@ pub async fn subscribe(mut observe: impl FnMut(Snapshot)) -> Result<()> {
 pub struct Snapshot {
     pub power: String,
     pub automatic: bool,
+    #[serde(default)]
+    pub keep_tv_on: bool,
     pub busy: bool,
     pub checked_at: Option<u64>,
     pub error: Option<String>,
@@ -160,6 +164,29 @@ fn open_verified() -> Result<tokio::net::windows::named_pipe::NamedPipeClient> {
     Ok(pipe)
 }
 
+async fn open_when_ready<T>(mut connect: impl FnMut() -> Result<T>) -> Result<T> {
+    // The server creates its next listening instance after accepting a client.
+    // A concurrent subscription or consecutive command may briefly see BUSY.
+    // Retry only that transient Windows error and verify every opened handle.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match connect() {
+                Ok(pipe) => return Ok(pipe),
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.raw_os_error() == Some(231)) =>
+                {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    })
+    .await
+    .context("Service pipe remained busy")?
+}
+
 /// Presence is independent of readiness: an installed but unavailable service
 /// must never cause a second controller to take ownership of the TV.
 pub fn installed() -> Result<bool> {
@@ -187,7 +214,7 @@ pub async fn request(request: Request) -> Result<Snapshot> {
     // ClientOptions defaults to SECURITY_IDENTIFICATION, so a pipe server
     // cannot impersonate the desktop user's token.
     let operation = async {
-        let mut pipe = open_verified()?;
+        let mut pipe = open_when_ready(open_verified).await?;
         let mut frame = serde_json::to_vec(&request)?;
         frame.push(b'\n');
         anyhow::ensure!(
@@ -210,4 +237,40 @@ pub async fn request(request: Request) -> Result<Snapshot> {
     tokio::time::timeout(Duration::from_secs(95), operation)
         .await
         .context("Service request timed out")?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn concurrent_pipe_accept_retries_busy_but_never_access_denied() {
+        let mut calls = 0;
+        let value = open_when_ready(|| {
+            calls += 1;
+            if calls < 3 {
+                return Err(std::io::Error::from_raw_os_error(231).into());
+            }
+            Ok("verified pipe")
+        })
+        .await
+        .unwrap();
+        assert_eq!(value, "verified pipe");
+        assert_eq!(calls, 3);
+        let mut denied_calls = 0;
+        let error = open_when_ready::<()>(|| {
+            denied_calls += 1;
+            Err(std::io::Error::from_raw_os_error(5).into())
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(denied_calls, 1);
+        assert_eq!(
+            error
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(5)
+        );
+    }
 }

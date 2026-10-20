@@ -7,6 +7,7 @@ import { build, preview } from 'vite';
 // Browser regression test; Playwright can be supplied through NODE_PATH.
 // Test the MINIFIED production app/CSS, never Vite's uncompressed dev styles.
 // The renderer runs against a simulated desktop event stream (no TV traffic).
+// Korean text assertions require an explicit locale on every test page.
 const { chromium } = createRequire(import.meta.url)('playwright');
 const bridge = `
 export const desktop = true;
@@ -52,7 +53,7 @@ try {
   server = await preview(config);
   browser = await chromium.launch({ channel: 'msedge', headless: true });
   for (const reducedMotion of ['no-preference', 'reduce']) {
-    const page = await browser.newPage({ reducedMotion, viewport: { width: 520, height: 650 } });
+    const page = await browser.newPage({ locale: 'ko-KR', reducedMotion, viewport: { width: 520, height: 650 } });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto('http://127.0.0.1:1421');
@@ -98,7 +99,7 @@ try {
     console.log(`${reducedMotion}: production completion ${Math.round(completion)}ms, check/hold ${Math.round(visible)}ms; latest service settings preserved.`);
     await page.close();
   }
-  const failure = await browser.newPage();
+  const failure = await browser.newPage({ locale: 'ko-KR' });
   await failure.goto('http://127.0.0.1:1421/?failure');
   await failure.getByRole('option', {name:'OLED42C4ENA'}).click();
   await failure.getByRole('button', {name:'연결',exact:true}).click();
@@ -108,7 +109,7 @@ try {
   console.log('Failure animation settles on the retry screen.');
   await failure.close();
   // A cancellation must invalidate the pending completion sequence.
-  const page = await browser.newPage();
+  const page = await browser.newPage({ locale: 'ko-KR' });
   await page.goto('http://127.0.0.1:1421');
   await page.getByRole('option', {name:'OLED42C4ENA'}).click();
   await page.getByRole('button', {name:'연결',exact:true}).click();

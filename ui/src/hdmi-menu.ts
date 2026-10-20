@@ -1,6 +1,7 @@
 import { t } from './i18n';
 import type { Device } from './model';
 import { icons } from './icons';
+import { duration } from './motion';
 
 export class HdmiMenu {
   readonly menu: HTMLElement;
@@ -8,6 +9,8 @@ export class HdmiMenu {
   private readonly choices: HTMLButtonElement[];
   private port: number | null = null;
   private pending = false;
+  private labelText = '';
+  private labelTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
     private readonly anchor: HTMLElement,
@@ -46,7 +49,7 @@ export class HdmiMenu {
   update(device: Device) {
     this.port = device.pc_hdmi ?? null;
     const label = this.port === null ? t('HDMI 선택') : `HDMI ${this.port}`;
-    this.trigger.querySelector('.hdmi-label')!.textContent = label;
+    this.updateLabel(label);
     this.trigger.setAttribute('aria-label', `${device.name}: ${label}`);
     this.menu.querySelector('[role=menu]')!.setAttribute('aria-label', `${device.name}: ${t('연결 HDMI')}`);
     // Keep the trigger's intrinsic width independent of the floating menu.
@@ -54,6 +57,39 @@ export class HdmiMenu {
     // Keep the outgoing selection still while closing. The next opening reads
     // the committed value, including a failed save's unchanged selection.
     if (!this.pending && this.menu.dataset.open === 'true') this.markSelected();
+  }
+
+  private updateLabel(next: string) {
+    if (this.labelText === next) return;
+    const previous = this.labelText;
+    this.labelText = next;
+    clearTimeout(this.labelTimer);
+    const label = this.trigger.querySelector<HTMLElement>('.hdmi-label')!;
+    if (!previous || !duration('--text-morph-dur', 150, label)) { label.textContent = next; return; }
+
+    // Keep shared letters stationary; cross-blur only the changed portion.
+    let start = 0, end = 0;
+    while (start < previous.length && start < next.length && previous[start] === next[start]) start++;
+    while (end < previous.length - start && end < next.length - start && previous[previous.length - 1 - end] === next[next.length - 1 - end]) end++;
+    const swap = document.createElement('span');
+    swap.className = 't-morph-swap';
+    const outgoing = document.createElement('span');
+    outgoing.className = 't-morph-old';
+    outgoing.setAttribute('aria-hidden', 'true');
+    outgoing.textContent = previous.slice(start, previous.length - end);
+    const incoming = document.createElement('span');
+    incoming.className = 't-morph-new';
+    incoming.textContent = next.slice(start, next.length - end);
+    swap.append(outgoing, incoming);
+    label.replaceChildren(next.slice(0, start), swap, next.slice(next.length - end));
+    swap.style.width = `${outgoing.getBoundingClientRect().width}px`;
+    void swap.offsetWidth;
+    swap.classList.add('is-morphing');
+    swap.style.width = `${incoming.getBoundingClientRect().width}px`;
+    this.labelTimer = setTimeout(() => {
+      label.textContent = next;
+      if (this.anchor.isConnected) this.anchor.style.setProperty('--hdmi-trigger-width', getComputedStyle(this.trigger.querySelector('.hdmi-trigger-content')!).width);
+    }, Math.max(duration('--text-morph-dur', 150, label), duration('--text-morph-resize-dur', 250, label)));
   }
 
   private markSelected() {

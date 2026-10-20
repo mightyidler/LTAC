@@ -77,11 +77,11 @@ try {
       node=node.querySelector('.hdmi-options'); const css=getComputedStyle(node), selected=node.querySelector('[aria-checked=true]');
       return {width:node.offsetWidth,height:node.offsetHeight,radius:css.borderRadius,blur:css.backdropFilter,gap:css.gap,selection:getComputedStyle(selected).backgroundColor,selectedY:selected.offsetTop,selectedHeight:selected.offsetHeight,rows:[...node.querySelectorAll('[role=menuitemradio]')].map(n=>({height:n.offsetHeight,padding:getComputedStyle(n).padding})),icon:getComputedStyle(node.querySelector('[data-port="3"] svg path')).fill};
     });
-    assert.equal(geometry.width,140); assert.equal(geometry.height,132); assert.equal(geometry.radius,'18px');assert.equal(geometry.blur,'blur(24px)');
+    assert.equal(geometry.width,140); assert.equal(geometry.height,148); assert.equal(geometry.radius,'20px');assert.equal(geometry.blur,'blur(24px)');
     assert.equal(geometry.selection,colorScheme==='dark'?'rgba(255, 255, 255, 0.08)':'rgba(0, 0, 0, 0.08)');
-    assert.equal(geometry.selectedY,68);assert.equal(geometry.selectedHeight,28);
+    assert.equal(geometry.selectedY,76);assert.equal(geometry.selectedHeight,32);
     assert.equal(geometry.gap,'4px');
-    assert.deepEqual(geometry.rows,Array(4).fill({height:28,padding:'6px'}));
+    assert.deepEqual(geometry.rows,Array(4).fill({height:32,padding:'8px'}));
     assert.equal(geometry.icon,colorScheme==='dark'?'rgb(255, 255, 255)':'rgb(0, 0, 0)');
     assert(Math.abs((await menu.locator('.hdmi-options').boundingBox()).x-(idle.x-10))<.1,'Panel starts 10px before the trigger text');
     const openTrigger=await button.locator('.hdmi-trigger-content').boundingBox(), panel=await menu.locator('.hdmi-options').boundingBox();
@@ -151,6 +151,17 @@ try {
   await trigger.click(); await page.waitForTimeout(300);
   await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
   await page.waitForFunction(()=>document.querySelector('.hdmi-menu').dataset.open==='false');
+  await trigger.locator('.t-morph-new').waitFor({state:'attached'});
+  const textFrames=await trigger.locator('.hdmi-label').evaluate(label=>new Promise(resolve=>{
+    const samples=[],start=performance.now();
+    const sample=()=>{
+      const outgoing=label.querySelector('.t-morph-old'),incoming=label.querySelector('.t-morph-new');
+      if(outgoing&&incoming) samples.push({prefix:label.firstChild.textContent,old:outgoing.textContent,next:incoming.textContent,hidden:outgoing.getAttribute('aria-hidden'),opacity:parseFloat(getComputedStyle(incoming).opacity),blur:getComputedStyle(incoming).filter});
+      if(performance.now()-start<300)requestAnimationFrame(sample);else resolve(samples);
+    };sample();
+  }));
+  assert(textFrames.length>0&&textFrames.every(f=>f.prefix==='HDMI '&&f.old==='3'&&f.next==='4'&&f.hidden==='true'),'Shared HDMI prefix stays fixed and outgoing digit is hidden from accessibility');
+  assert(textFrames.some(f=>f.opacity>0&&f.opacity<1&&f.blur!=='blur(0px)'),'Changed digit cross-fades and blurs');
   assert.equal(await trigger.innerText(),'HDMI 4','Keyboard chooses and saves the next port');
   await trigger.click();await page.waitForTimeout(300);
   await page.locator('.hdmi-menu').first().locator('[data-port="2"]').click();
@@ -213,5 +224,5 @@ try {
   await page.keyboard.press('Escape');await page.mouse.move(1,1);await page.waitForTimeout(300);
   const lastClosed=await last.boundingBox();assert(Math.abs(lastRest.x-lastClosed.x)<.1&&Math.abs(lastRest.y-lastClosed.y)<.1,'Upward close preserves the original trigger position');
   await page.close();
-  console.log('HDMI dropdown: L4/R2/T2/B2 hover, 18px panel radius, 14px item radius, 6px padding, 4px gaps, stable visible trigger, independent motion, KO/EN/JA × dark/light, save/reload, rollback, keyboard, interrupted close/reopen and bottom placement passed.');
+  console.log('HDMI dropdown: L4/R2/T2/B2 hover, 20px panel radius, 16px item radius, 8px padding, 4px gaps, stable visible trigger, independent motion, KO/EN/JA × dark/light, save/reload, rollback, keyboard, interrupted close/reopen and bottom placement passed.');
 } finally {await browser?.close();await server?.httpServer.close();}

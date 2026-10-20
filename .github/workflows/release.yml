@@ -72,6 +72,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
+          # The existing tag fixes the source commit. Use the default branch for
+          # release creation so older workflow files do not require Workflows:write.
+          releaseCommitish: ${{ github.event.repository.default_branch }}
           releaseName: 'LTAC ${{ github.ref_name }}'
           releaseBody: |
             Windows x64용 LG webOS TV 자동 전원 제어.

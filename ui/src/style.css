@@ -175,7 +175,7 @@ svg { display: block; flex-shrink: 0; }
 .saved-device:has(.device-menu[data-open="true"]) { z-index: 10; }
 .more-anchor:has([data-open="true"], [data-closing="true"]) { z-index: 8; }
 .device-menu { position: absolute; right: 0; top: 0; width: 24px; height: 24px; background: var(--menu-bg); box-shadow: inset 0 0 0 1px var(--border-subtle); }
-.device-menu { --menu-min-width: 140px; --menu-open-height: 84px; --morph-open-dur: var(--duration-fast); --morph-close-dur: var(--duration-quick); --morph-r-open: 23px; }
+.device-menu { --menu-min-width: 140px; --menu-open-height: 76px; --morph-open-dur: var(--duration-fast); --morph-close-dur: var(--duration-quick); --morph-r-open: 20px; }
 /* Press the same surface that becomes the menu. Its closed center stays fixed
    while the released surface expands down and left from the More button. */
 .device-menu { transform-origin: calc(100% - 12px) 12px; transition: width var(--morph-close-dur) var(--morph-close-ease), height var(--morph-close-dur) var(--morph-close-ease), border-radius var(--morph-close-dur) var(--morph-close-ease), scale var(--duration-quick) var(--ease-smooth-out); }
@@ -192,7 +192,7 @@ svg { display: block; flex-shrink: 0; }
 .device-menu[data-open="true"] .t-morph-plus { transform: none; }
 .device-menu[data-open="true"] .t-morph-plus svg { transform: none; }
 .device-menu .t-morph-menu { padding: 4px; display: flex; flex-direction: column; gap: 4px; }
-.device-menu [role="menuitem"] { display: flex; align-items: center; justify-content: flex-start; gap: 8px; background: transparent; color: var(--text-primary); border-radius: 18px; padding: 10px; font-size: 13px; line-height: 16px; white-space: nowrap; text-align: left; }
+.device-menu [role="menuitem"] { display: flex; align-items: center; justify-content: flex-start; gap: 8px; background: transparent; color: var(--text-primary); border-radius: 16px; padding: 8px; font-size: 13px; line-height: 16px; white-space: nowrap; text-align: left; }
 .device-menu [role="menuitem"] > svg { width: 16px; height: 16px; }
 .device-menu [role="menuitem"]:is(:hover, :active, :focus-visible) { background: var(--surface-subtle); outline: none; }
 .device-menu [data-action="remove"] { font-size: 12px; }

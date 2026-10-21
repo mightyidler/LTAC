@@ -24,8 +24,11 @@ export function fitScreenTimeClose(menu: HTMLElement, button: HTMLButtonElement)
   followScreenTimeClose(menu);
   const box = button.getBoundingClientRect();
   const width = parseFloat(button.style.width);
+  const style = getComputedStyle(button);
   menu.style.setProperty('--screen-trigger-width', `${width}px`);
-  menu.style.setProperty('--screen-trigger-height', getComputedStyle(button).height);
+  menu.style.setProperty('--screen-trigger-height', style.height);
+  menu.style.setProperty('--screen-trigger-background', style.backgroundColor);
+  menu.style.setProperty('--screen-trigger-shadow', style.boxShadow);
   menu.style.setProperty('--screen-close-x', `${box.right - width - parseFloat(menu.style.left)}px`);
   menu.style.setProperty('--screen-close-y', `${box.top - parseFloat(menu.style.top)}px`);
   copyScreenTimeLabel(menu, button);
@@ -91,6 +94,16 @@ export function mountScreenTimeScrollbar(menu: HTMLElement) {
   const events = new AbortController();
   let thumbHeight = 0;
   let drag: { pointer: number; y: number; scroll: number } | undefined;
+  let hideTimer: number | undefined;
+  const reveal = () => {
+    if (menu.dataset.scrollReady !== 'true' || track.dataset.scrollable !== 'true') return;
+    clearTimeout(hideTimer);
+    track.dataset.visible = 'true';
+    if (!drag) hideTimer = window.setTimeout(() => {
+      delete track.dataset.visible;
+      hideTimer = undefined;
+    }, 900);
+  };
   const metrics = () => ({ height: track.clientHeight, range: scroller.scrollHeight - scroller.clientHeight });
   const update = () => {
     const { height, range } = metrics();
@@ -100,7 +113,7 @@ export function mountScreenTimeScrollbar(menu: HTMLElement) {
     thumb.style.transform = `translateY(${range > 0 ? scroller.scrollTop / range * (height - thumbHeight) : 0}px)`;
   };
   const observer = new ResizeObserver(update); observer.observe(scroller); observer.observe(track);
-  scroller.addEventListener('scroll', update, { passive: true, signal: events.signal });
+  scroller.addEventListener('scroll', () => { update(); reveal(); }, { passive: true, signal: events.signal });
   track.addEventListener('pointerdown', event => {
     if (event.button !== 0 || menu.dataset.scrollReady !== 'true') return;
     event.preventDefault();
@@ -111,6 +124,7 @@ export function mountScreenTimeScrollbar(menu: HTMLElement) {
       update();
     }
     drag = { pointer: event.pointerId, y: event.clientY, scroll: scroller.scrollTop };
+    reveal();
     track.setPointerCapture(event.pointerId); track.dataset.dragging = 'true';
   }, { signal: events.signal });
   track.addEventListener('pointermove', event => {
@@ -119,12 +133,13 @@ export function mountScreenTimeScrollbar(menu: HTMLElement) {
     if (height > thumbHeight) scroller.scrollTop = drag.scroll + (event.clientY - drag.y) * range / (height - thumbHeight);
     update();
   }, { signal: events.signal });
-  const release = () => { drag = undefined; delete track.dataset.dragging; };
+  const release = () => { drag = undefined; delete track.dataset.dragging; reveal(); };
   track.addEventListener('lostpointercapture', release, { signal: events.signal });
   track.addEventListener('pointerup', release, { signal: events.signal });
   track.addEventListener('pointercancel', release, { signal: events.signal });
-  scrollbars.set(menu, () => { observer.disconnect(); events.abort(); });
+  scrollbars.set(menu, () => { clearTimeout(hideTimer); delete track.dataset.visible; observer.disconnect(); events.abort(); });
   update();
+  return reveal;
 }
 
 export function unmountScreenTimeScrollbar(menu: HTMLElement) {

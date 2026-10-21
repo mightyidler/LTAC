@@ -38,7 +38,7 @@ try {
       }
       if(await page.locator('.page-scroll').count()) {
       const track=await page.locator('.page-scroll').first().evaluate(node=>({margin:getComputedStyle(node).marginRight,top:getComputedStyle(node,'::-webkit-scrollbar-track').marginTop,bottom:getComputedStyle(node,'::-webkit-scrollbar-track').marginBottom}));
-      assert.equal(track.margin,'3px');assert.equal(track.bottom,'8px');
+      assert.equal(track.margin,'3px');assert.equal(track.bottom,'5px');
       assert.equal(track.top,screen==='home'||screen==='selected'?'52px':'56px','Preserve existing scrollbar top placement');
       }
       if (screen === 'manual') {
@@ -58,5 +58,5 @@ try {
     }
     await page.close();
   }
-  console.log('Native frame web surface: opaque 375×500 without CSS frame/gutter at 100/125/150/175/200% across both themes and home/selection/manual/result; preserved scroll top, 3px right/8px bottom, focus/typing/Tab passed.');
+  console.log('Native frame web surface: opaque 375×500 without CSS frame/gutter at 100/125/150/175/200% across both themes and home/selection/manual/result; preserved scroll top, 3px right/5px bottom, focus/typing/Tab passed.');
 } finally { await browser?.close(); await server.close(); }

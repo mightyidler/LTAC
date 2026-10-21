@@ -77,11 +77,13 @@ try {
       node=node.querySelector('.hdmi-options'); const css=getComputedStyle(node), selected=node.querySelector('[aria-checked=true]');
       return {width:node.offsetWidth,height:node.offsetHeight,radius:css.borderRadius,blur:css.backdropFilter,gap:css.gap,selection:getComputedStyle(selected).backgroundColor,selectedY:selected.offsetTop,selectedHeight:selected.offsetHeight,rows:[...node.querySelectorAll('[role=menuitemradio]')].map(n=>({height:n.offsetHeight,padding:getComputedStyle(n).padding})),icon:getComputedStyle(node.querySelector('[data-port="3"] svg path')).fill};
     });
-    assert.equal(geometry.width,140); assert.equal(geometry.height,148); assert.equal(geometry.radius,'20px');assert.equal(geometry.blur,'blur(24px)');
+    assert.equal(geometry.width,140); assert.equal(geometry.height,156); assert.equal(geometry.radius,'24px');assert.equal(geometry.blur,'blur(24px)');
     assert.equal(geometry.selection,colorScheme==='dark'?'rgba(255, 255, 255, 0.08)':'rgba(0, 0, 0, 0.08)');
-    assert.equal(geometry.selectedY,76);assert.equal(geometry.selectedHeight,32);
+    assert.equal(geometry.selectedY,80);assert.equal(geometry.selectedHeight,32);
     assert.equal(geometry.gap,'4px');
     assert.deepEqual(geometry.rows,Array(4).fill({height:32,padding:'8px'}));
+    assert.equal(await menu.locator('.hdmi-options').evaluate(n=>getComputedStyle(n).padding),'8px');
+    const weights=await menu.locator('[role=menuitemradio]').evaluateAll(nodes=>nodes.map(n=>({selected:n.getAttribute('aria-checked')==='true',weight:Number(getComputedStyle(n).fontWeight)})));assert.equal(weights.find(n=>n.selected).weight,weights.find(n=>!n.selected).weight+100,'Selected HDMI text is exactly 100 heavier');
     assert.equal(geometry.icon,colorScheme==='dark'?'rgb(255, 255, 255)':'rgb(0, 0, 0)');
     assert(Math.abs((await menu.locator('.hdmi-options').boundingBox()).x-(idle.x-10))<.1,'Panel starts 10px before the trigger text');
     const openTrigger=await button.locator('.hdmi-trigger-content').boundingBox(), panel=await menu.locator('.hdmi-options').boundingBox();
@@ -114,7 +116,8 @@ try {
     const more=first.locator('.device-menu:not(.hdmi-menu)');
     assert.equal(await menu.getAttribute('data-open'),'false','Only one device menu can be open');
     const moreGeometry=await more.evaluate(n=>({width:n.offsetWidth,height:n.offsetHeight,radius:getComputedStyle(n).borderRadius,gap:getComputedStyle(n.querySelector('.t-morph-menu')).gap}));
-    assert.deepEqual(moreGeometry,{width:140,height:76,radius:'20px',gap:'4px'},'More menu fits two 32px rows, a 4px gap and 4px outer padding');
+    assert.deepEqual(moreGeometry,{width:140,height:84,radius:'24px',gap:'4px'},'More menu fits two 32px rows, a 4px gap and 8px outer padding');
+    assert.equal(await more.locator('.t-morph-menu').evaluate(n=>getComputedStyle(n).padding),'8px');
     assert.deepEqual(errors,[]);
     await context.close();
   }
@@ -224,5 +227,5 @@ try {
   await page.keyboard.press('Escape');await page.mouse.move(1,1);await page.waitForTimeout(300);
   const lastClosed=await last.boundingBox();assert(Math.abs(lastRest.x-lastClosed.x)<.1&&Math.abs(lastRest.y-lastClosed.y)<.1,'Upward close preserves the original trigger position');
   await page.close();
-  console.log('HDMI dropdown: L4/R2/T2/B2 hover, 20px panel radius, 16px item radius, 8px padding, 4px gaps, stable visible trigger, independent motion, KO/EN/JA × dark/light, save/reload, rollback, keyboard, interrupted close/reopen and bottom placement passed.');
+  console.log('HDMI dropdown: selected weight +100, 24px panel radius, 16px item radius, 8px panel/item padding, 4px gaps; More geometry, stable trigger, independent motion, KO/EN/JA × dark/light, persistence, rollback, keyboard, interrupted close/reopen and bottom placement passed.');
 } finally {await browser?.close();await server?.httpServer.close();}

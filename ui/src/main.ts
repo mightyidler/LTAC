@@ -508,10 +508,10 @@ function openScreenTime() {
   menu.dataset.anchorTop = String(anchor.top); menu.dataset.anchorRight = String(anchor.right);
   menu.dataset.viewportWidth = String(innerWidth); menu.dataset.viewportHeight = String(innerHeight);
   const value = screenDraft ?? state.screen_timeout_seconds;
-  menu.innerHTML = `<div class="t-morph-menu app-scrollbar" role="menu" aria-labelledby="screen-time-label" inert>${screenTimeOptions(value).map(seconds => `<button role="menuitemradio" aria-checked="${seconds === value}" data-seconds="${seconds}"><span>${screenTimeLabel(seconds)}</span><span class="screen-preset-check" aria-hidden="true">${check}</span></button>`).join('')}</div><span class="t-morph-plus" aria-hidden="true">${escape(screenTimeLabel(value))}</span>`;
+  menu.innerHTML = `<div class="t-morph-menu app-scrollbar" role="menu" aria-labelledby="screen-time-label" inert>${screenTimeOptions(value).map(seconds => `<button role="menuitemradio" aria-checked="${seconds === value}" data-seconds="${seconds}"><span>${screenTimeLabel(seconds)}</span><span class="screen-preset-check" aria-hidden="true">${icons.checkSmall}</span></button>`).join('')}</div><span class="t-morph-plus" aria-hidden="true">${escape(screenTimeLabel(value))}</span>`;
   app.querySelector('.app-window')!.append(menu);
   fitMenuWidth(menu);
-  mountScreenTimeScrollbar(menu);
+  const revealScrollbar = mountScreenTimeScrollbar(menu);
   const width = Math.max(box.width, parseFloat(menu.style.getPropertyValue('--menu-open-width')));
   const height = Math.min(parseFloat(getComputedStyle(menu).getPropertyValue('--screen-menu-max-height')), bounds.height - 32);
   menu.style.setProperty('--menu-open-height', `${height}px`);
@@ -535,11 +535,14 @@ function openScreenTime() {
   const selected = (menu.querySelector<HTMLElement>('[aria-checked=true]') ?? menu.querySelector<HTMLElement>('[role=menuitemradio]'))!;
   const choices = menu.querySelector<HTMLElement>('[role=menu]')!;
   selected.focus({ preventScroll: true });
-  choices.scrollTop = Math.max(0, selected.offsetTop - (height - selected.offsetHeight) / 2);
+  // Keep the opening at the top unless the selected row needs to be revealed.
+  // Centering an already-visible row clips the menu's top padding by a few px.
+  const bottomInset = parseFloat(getComputedStyle(choices).paddingBottom);
+  choices.scrollTop = Math.max(0, selected.offsetTop + selected.offsetHeight + bottomInset - height);
   // Hidden trigger digits can still be popping during a fast reopen. Only the
   // surface/list reveal determines when the scrollbar is safe to show.
   void Promise.allSettled([...menu.getAnimations(), ...choices.getAnimations()].map(animation => animation.finished)).then(() => {
-    if (activeMenu === menu && menu.dataset.open === 'true') menu.dataset.scrollReady = 'true';
+    if (activeMenu === menu && menu.dataset.open === 'true') { menu.dataset.scrollReady = 'true'; revealScrollbar(); }
   });
 }
 function fitMenuWidth(menu: HTMLElement) {

@@ -21,7 +21,8 @@ svg { display: block; flex-shrink: 0; }
 #app { width: 100%; height: 100vh; padding: 0; }
 /* Windows owns the outer border, shadow and corner clipping. The webview
    fills the entire client area; no transparent gutter or duplicate CSS frame. */
-.app-window { --scrollbar-bottom-inset: 8px; width: 100%; height: 100%; position: relative; background: var(--window-bg); border: 0; border-radius: 0; overflow: hidden; isolation: isolate; }
+/* Fixed inset: Windows' 8px corner minus the page scrollbar's 3px right gap. */
+.app-window { --scrollbar-bottom-inset: 5px; width: 100%; height: 100%; position: relative; background: var(--window-bg); border: 0; border-radius: 0; overflow: hidden; isolation: isolate; }
 .app-surface { position: absolute; inset: 0; background: var(--window-bg); overflow: hidden; isolation: isolate; }
 .window-controls { position: absolute; inset: 0 0 auto; height: 52px; padding: 11px; display: flex; align-items: center; z-index: 10; background: var(--bg-header); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); user-select: none; }
 .window-actions { display: flex; gap: 12px; margin-left: auto; }
@@ -68,6 +69,10 @@ svg { display: block; flex-shrink: 0; }
 .device-choice-row:not(:last-child)::after { content: ''; position: absolute; bottom: -5px; left: 40px; right: 8px; height: 1px; background: var(--surface-subtle); pointer-events: none; }
 .device-choice > span:first-of-type { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .selection-check { margin-left: auto; opacity: 0; scale: .8; transition: opacity var(--duration-fast) var(--ease-in-out), scale var(--duration-fast) var(--ease-smooth-out); }
+/* Native 16px check at the standard 13px menu label size; follows text sizing. */
+.device-menu :is(.hdmi-check, .screen-preset-check) { display: grid; place-items: center; width: calc(1em * 16 / 13); height: calc(1em * 16 / 13); flex-shrink: 0; }
+.device-menu :is(.hdmi-check, .screen-preset-check) svg { width: 100%; height: 100%; }
+.device-menu :is(.hdmi-check, .screen-preset-check) path { stroke-width: 1.6; }
 .device-choice[aria-selected="true"] .selection-check { opacity: 1; scale: 1; }
 .page-footer { position: absolute; bottom: 0; left: 0; right: 0; display: flex; gap: 8px; padding: 16px 15px; background: transparent; z-index: 4; }
 .page-footer::before { content: ''; position: absolute; inset: 0; z-index: -1; background: var(--bg-scrim); -webkit-backdrop-filter: blur(40px); backdrop-filter: blur(40px); pointer-events: none; }
@@ -179,23 +184,23 @@ svg { display: block; flex-shrink: 0; }
 .saved-device:has(.device-menu[data-open="true"]) { z-index: 10; }
 .more-anchor:has([data-open="true"], [data-closing="true"]) { z-index: 8; }
 .device-menu { position: absolute; right: 0; top: 0; width: 24px; height: 24px; background: var(--menu-bg); box-shadow: inset 0 0 0 1px var(--border-subtle); }
-.device-menu { --menu-min-width: 140px; --menu-open-height: 76px; --morph-open-dur: var(--duration-fast); --morph-close-dur: var(--duration-quick); --morph-r-open: 20px; }
+.device-menu { --menu-min-width: 140px; --menu-open-height: 84px; --morph-open-dur: var(--duration-fast); --morph-close-dur: var(--duration-quick); --morph-r-open: 24px; }
 /* Press the same surface that becomes the menu. Its closed center stays fixed
    while the released surface expands down and left from the More button. */
-.device-menu { transform-origin: calc(100% - 12px) 12px; transition: width var(--morph-close-dur) var(--morph-close-ease), height var(--morph-close-dur) var(--morph-close-ease), border-radius var(--morph-close-dur) var(--morph-close-ease), scale var(--duration-quick) var(--ease-smooth-out); }
+.device-menu { transform-origin: calc(100% - 12px) 12px; transition: width var(--morph-close-dur) var(--morph-close-ease), height var(--morph-close-dur) var(--morph-close-ease), border-radius var(--morph-close-dur) var(--morph-close-ease), scale var(--duration-quick) var(--ease-smooth-out), background-color var(--morph-close-dur) var(--morph-close-ease), box-shadow var(--morph-close-dur) var(--morph-close-ease), backdrop-filter var(--morph-close-dur) var(--morph-close-ease); }
 .device-menu:has(.more-button:active):not([data-open="true"]) { scale: .9; }
 .device-menu[data-open="true"] { width: var(--menu-open-width, var(--menu-min-width)); height: var(--menu-open-height); background: var(--menu-overlay); box-shadow: inset 0 0 0 1px var(--border-subtle), 0 4px 8px var(--shadow-menu); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); }
 .device-menu[data-open="true"] { transition: width var(--morph-open-dur) var(--morph-ease), height var(--morph-open-dur) var(--morph-ease), border-radius var(--morph-open-dur) var(--morph-ease), scale var(--duration-quick) var(--ease-smooth-out); }
-/* Shrink the visible surface back to its trigger using the existing morph.
-   Fading its material first makes the size transition appear to vanish. */
+/* Keep one surface while its size and material return to the closed control. */
 .device-menu[data-closing="true"] { background: var(--menu-overlay); box-shadow: inset 0 0 0 1px var(--border-subtle), 0 4px 8px var(--shadow-menu); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); }
+.device-menu[data-closing="true"]:has(> .more-button) { background: var(--menu-bg); box-shadow: inset 0 0 0 1px var(--border-subtle); -webkit-backdrop-filter: blur(0px); backdrop-filter: blur(0px); }
 .device-menu .t-morph-plus { display: grid; place-items: center; width: 24px; height: 24px; top: 0; bottom: auto; padding: 0; color: var(--icon-secondary); }
 .device-menu .more-button:active:not(:disabled) { scale: 1; }
 .device-menu .t-morph-plus, .device-menu .t-morph-plus svg { transform-origin: center; }
 /* Cross-fade in place: a translated ellipsis looks off-center on menu close. */
 .device-menu[data-open="true"] .t-morph-plus { transform: none; }
 .device-menu[data-open="true"] .t-morph-plus svg { transform: none; }
-.device-menu .t-morph-menu { padding: 4px; display: flex; flex-direction: column; gap: 4px; }
+.device-menu .t-morph-menu { padding: 8px; display: flex; flex-direction: column; gap: 4px; }
 .device-menu [role="menuitem"] { display: flex; align-items: center; justify-content: flex-start; gap: 8px; background: transparent; color: var(--text-primary); border-radius: 16px; padding: 8px; font-size: 13px; line-height: 16px; white-space: nowrap; text-align: left; }
 .device-menu [role="menuitem"] > svg { width: 16px; height: 16px; }
 .device-menu [role="menuitem"]:is(:hover, :active, :focus-visible) { background: var(--surface-subtle); outline: none; }
@@ -216,14 +221,13 @@ button:disabled { color: var(--text-placeholder); }
 .preference-row > .setting-copy { font-size: 15px; line-height: 20px; }
 .preference-value { color: var(--text-preference-value); font-size: 15px; line-height: 20px; }
 .preference-chevron { color: var(--text-placeholder); width: 20px; height: 20px; }
-.preference-option { width: 100%; display: flex; align-items: center; gap: 8px; padding: 12px 8px; border-radius: 8px; background: transparent; text-align: left; position: relative; font-size: 16px; line-height: 24px; }
+.preference-option { width: 100%; display: flex; align-items: center; gap: 8px; padding: 12px 8px; border-radius: 8px; background: transparent; color: var(--text-secondary); text-align: left; position: relative; font-size: 16px; line-height: 24px; }
 .preference-option:hover:not(:disabled) { background: var(--interaction-hover-subtle); }
 .preference-option > span:first-child { flex: 1; }
 .preference-option .selection-check { color: var(--text-primary); }
-.page-heading h1, #compact-title, .device-choice, .action:not(.primary), .connection-copy h1, .device-info p, .setting-copy p, .shortcut-setting p, .preference-row > .setting-copy, .preference-option { color: var(--text-primary); }
+.page-heading h1, #compact-title, .device-choice, .action:not(.primary), .connection-copy h1, .device-info p, .setting-copy p, .shortcut-setting p, .preference-row > .setting-copy, .preference-option[aria-checked="true"] { color: var(--text-primary); }
 .preference-option[aria-checked="true"] .selection-check { opacity: 1; scale: 1; }
 .preference-option:not(:last-child) { margin-bottom: 9px; }
-.preference-option:not(:last-child)::after { content: ''; position: absolute; bottom: -5px; left: 8px; right: 8px; height: 1px; background: var(--border-subtle); pointer-events: none; }
 .general-section { margin-top: 16px; }
 .about-section { margin-top: 16px; }
 

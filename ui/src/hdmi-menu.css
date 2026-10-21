@@ -11,6 +11,7 @@
 .hdmi-trigger-content > svg { width: 16px; height: 16px; transform-origin: center; transform: rotate(0deg); transition: transform var(--duration-fast) var(--ease-in-out); }
 .hdmi-button[aria-expanded="true"] .hdmi-trigger-content > svg { transform: rotate(180deg); }
 .hdmi-menu .hdmi-button:is(:hover, :focus-visible, :active):not(:disabled) { background: var(--hdmi-selection-bg); color: var(--text-primary); }
+.hdmi-menu .hdmi-button:is(:hover, :focus-visible, :active):not(:disabled) .hdmi-trigger-content > svg { color: var(--text-primary); }
 .hdmi-menu .hdmi-button:active:not(:disabled) { scale: .96; transition-duration: var(--duration-quick), var(--duration-quick), var(--duration-micro); }
 .hdmi-menu .hdmi-options { position: absolute; left: -6px; top: calc(100% + 4px); width: var(--menu-open-width, var(--menu-min-width)); display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 8px; border-radius: var(--morph-r-open); background: var(--menu-overlay); box-shadow: inset 0 0 0 1px var(--border-subtle), 0 4px 16px var(--shadow-subtle); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); }
 .hdmi-menu[data-side="up"] .hdmi-options { top: auto; bottom: calc(100% + 4px); }

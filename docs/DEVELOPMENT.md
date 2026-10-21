@@ -40,8 +40,35 @@ npm run desktop:build -- -- --locked
 `tools/check-release.mjs --package`와 `tools/verify-update.mjs <설치파일>`로
 패키지 리소스와 서명을 검증할 수 있습니다.
 
-버전 태그의 릴리스 워크플로는 서명 검증 후 릴리스를 공개하고 `update.json`을
-갱신합니다. 로컬 검증 중에는 태그 푸시나 manifest 게시 도구를 실행하지 않습니다.
+## 버전 배포
+
+변경 사항을 먼저 커밋한 뒤 아래 명령 하나로 배포합니다.
+
+```powershell
+npm run setup:hooks
+npm run release -- 0.1.7
+```
+
+버전 번호는 예시입니다. 현재보다 높은 새 번호를 지정하세요. 명령은 원격 main을
+fast-forward로 동기화하고 npm·Cargo·Tauri 버전 7곳을 맞춘 다음 UI·브라우저·Rust
+검증을 수행합니다. 통과하면 버전 커밋과 태그를 만들고 main과 태그를 원자적으로
+함께 푸시합니다. 원격 이력이 갈라졌으면 덮어쓰지 않고 중단합니다.
+검증 실패 시 버전 파일을 원래대로 복구하고 커밋·태그·푸시는 만들지 않습니다.
+푸시만 실패했다면 원인을 해결한 뒤 `git push --atomic origin main v0.1.7`로 재시도합니다.
+이미 공개한 버전 태그는 이동하거나 재사용하지 않습니다.
+
+일반 main 푸시는 Actions를 실행하지 않고, 버전 태그는 `Release LTAC` 하나를
+실행합니다. PR과 필요 시 수동 실행으로 별도 검사할 수 있습니다. 릴리스에서도 브라우저 검증을 포함한 전체
+검사를 수행하고, 설치 파일·서명·실제 설치 검증이 끝나야 공개합니다.
+로컬 pre-push 훅은 main과 버전 태그를 올리기 전에 UI 검증을 수행합니다.
+새 clone에서는 `npm run setup:hooks`를 한 번 실행해야 합니다.
+
+새 앱은 GitHub 최신 릴리스에 첨부한 `update.json`으로 업데이트를 확인합니다.
+릴리스 생성 파일은 `local/release/`에만 쓰며 매번 main을 갱신하지 않습니다.
+기존 앱은 raw main/update.json을 사용하므로 전환 후 첫 릴리스에서만 호환용
+manifest를 main에 한 번 기록합니다. 다음 배포 명령이 이 커밋도 자동으로 동기화합니다.
+이 manifest의 `release_asset_migration` 표시를 유지해야 합니다. 기존 앱은 이
+전환 버전을 설치한 다음부터 최신 릴리스 첨부 파일을 사용합니다.
 
 ## 저장소 위생
 

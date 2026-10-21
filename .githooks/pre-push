@@ -1,0 +1,21 @@
+#!/bin/sh
+# Release command already ran the complete checks on this exact working tree.
+if [ "$LTAC_RELEASE_VERIFIED" = "1" ]; then
+  exit 0
+fi
+while read local_ref local_sha remote_ref remote_sha; do
+  case "$local_sha" in
+    0000000000000000000000000000000000000000) continue ;;
+  esac
+  case "$local_ref" in
+    refs/heads/main|refs/tags/v*)
+      # Tests read files on disk. Do not claim they verified some other commit.
+      if [ -n "$(git status --porcelain)" ] || [ "$(git rev-parse "$local_sha^{commit}")" != "$(git rev-parse HEAD)" ]; then
+        echo "Commit your changes and check out the commit being pushed before pushing main or a version tag." >&2
+        exit 1
+      fi
+      npm run verify:ui || exit $?
+      break
+      ;;
+  esac
+done

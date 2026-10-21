@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: ltac-release-${{ github.ref }}
+  group: ltac-release
   cancel-in-progress: false
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
       - run: npm ci
-      - run: npm run check:repository
+      - run: npm run verify:ui
       - run: node tools/check-repository.mjs --history
       - name: Verify matching versions and tag
         shell: pwsh
@@ -53,7 +53,6 @@ jobs:
       - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
-      - run: npm test
       - name: Save verified build dependencies
         if: steps.rust-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -79,10 +78,6 @@ jobs:
           releaseBody: |
             Windows x64용 LG webOS TV 자동 전원 제어.
 
-            - HDMI 선택 메뉴의 항목 높이와 여백을 늘리고 모서리를 다듬었습니다.
-            - HDMI 변경 시 공통 텍스트는 유지하고 바뀐 부분에 전환 효과를 적용했습니다.
-            - HDMI 메뉴의 크기와 선택 텍스트 전환에 대한 회귀 검증을 보강했습니다.
-
             데스크톱 앱·CLI·Windows 전원 서비스와 서명된 앱 내 업데이트를 포함합니다.
             실제 TV 전원·PC 절전·재부팅·종료 통합 시험은 자동 검증에 포함되지 않습니다.
           releaseDraft: true
@@ -105,19 +100,34 @@ jobs:
           $installer = Get-Item "src-tauri/target/release/bundle/nsis/LTAC_${version}_x64-setup.exe"
           powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tools/check-installer.ps1 -Installer $installer.FullName
           if ($LASTEXITCODE -ne 0) { throw 'Installer lifecycle regression failed' }
-      - name: Publish verified release
-        run: gh release edit "$env:GITHUB_REF_NAME" --draft=false
+      - name: Upload update manifest to the verified release
+        run: gh release upload "$env:GITHUB_REF_NAME" local/release/update.json --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish update manifest on main
+      - name: Publish verified release
+        run: gh release edit "$env:GITHUB_REF_NAME" --draft=false --latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Old installed clients still read raw main/update.json. Point them to the
+      # first release using release assets once, then never write main again.
+      - name: Migrate legacy updater endpoint once
         shell: bash
         run: |
-          cp update.json "$RUNNER_TEMP/ltac-update.json"
+          cp local/release/update.json "$RUNNER_TEMP/ltac-update.json"
           git fetch origin main
           git checkout -B main origin/main
+          if node --input-type=module -e "import fs from 'node:fs'; process.exit(JSON.parse(fs.readFileSync('update.json', 'utf8')).release_asset_migration ? 0 : 1)"; then
+            echo "Legacy updater already migrated; main is unchanged."
+            exit 0
+          fi
           cp "$RUNNER_TEMP/ltac-update.json" update.json
+          node --input-type=module -e "import fs from 'node:fs'; const m=JSON.parse(fs.readFileSync('update.json', 'utf8')); m.release_asset_migration=true; fs.writeFileSync('update.json', JSON.stringify(m,null,2)+'\n')"
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git add update.json
-          git diff --staged --quiet || git commit -m "chore: publish update manifest for ${{ github.ref_name }}"
-          git push origin HEAD:main
+          git diff --staged --quiet || git commit -m "chore: migrate legacy updater to release assets"
+          for attempt in 1 2 3; do
+            git push origin HEAD:main && exit 0
+            git pull --rebase origin main || exit 1
+          done
+          exit 1

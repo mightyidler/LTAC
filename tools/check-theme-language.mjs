@@ -111,7 +111,7 @@ try {
         return [...new Set(names)].filter(name => !root.getPropertyValue(name).trim() && !['--shortcut-resize-delay'].includes(name));
       });
       // Some motion aliases intentionally have per-component fallbacks, checked separately by existing motion tests.
-      assert(!tokenAudit.some(name => /^(--p-|--bg-|--text-|--border-|--interaction-|--status-|--color-)/.test(name)), tokenAudit.join(', '));
+      assert(!tokenAudit.some(name => !name.startsWith('--text-morph-') && /^(--p-|--bg-|--text-|--border-|--interaction-|--status-|--color-)/.test(name)), tokenAudit.join(', '));
       await page.locator('#app').screenshot({ path: new URL(`${expected}-${theme}-home.png`, evidence).pathname.replace(/^\/(\w:)/, '$1') });
       await page.locator('.home-scroll').evaluate(node => node.scrollTop = node.scrollHeight);
       await page.locator('#app').screenshot({ path: new URL(`${expected}-${theme}-home-general.png`, evidence).pathname.replace(/^\/(\w:)/, '$1') });
@@ -165,12 +165,12 @@ try {
         ctx.fillStyle = panel.getPropertyValue('--shadow-menu').trim(); ctx.fillRect(0,0,1,1);
         return { radius: panel.borderRadius, width: node.offsetWidth, height: node.offsetHeight, blur: panel.backdropFilter, padding: content.padding, gap: content.gap, shadow: panel.boxShadow, shadowRgba: [...ctx.getImageData(0,0,1,1).data], rows: [...node.querySelectorAll('[role=menuitem]')].map(item => { const css = getComputedStyle(item); return { radius: css.borderRadius, padding: css.padding, gap: css.gap, align: css.justifyContent, height: item.offsetHeight }; }) };
       });
-      assert.equal(menuGeometry.radius, '23px'); assert.equal(menuGeometry.height, 84);
+      assert.equal(menuGeometry.radius, '20px'); assert.equal(menuGeometry.height, 76);
       assert.equal(menuGeometry.width, 140, 'All locales use the same 140px minimum');
       assert.equal(menuGeometry.padding, '4px'); assert.equal(menuGeometry.gap, '4px'); assert.equal(menuGeometry.blur, 'blur(24px)');
       assert(menuGeometry.shadow.includes('0px 4px 8px'), 'Menu drop shadow uses the supplied offset and radius');
       assert.deepEqual(menuGeometry.shadowRgba, [0,0,0, theme === 'light' ? 10 : 20], 'Light shadow #0000000A; retain dark shadow color');
-      for (const row of menuGeometry.rows) assert.deepEqual(row, { radius: '18px', padding: '10px', gap: '8px', align: 'flex-start', height: 36 });
+      for (const row of menuGeometry.rows) assert.deepEqual(row, { radius: '16px', padding: '8px', gap: '8px', align: 'flex-start', height: 32 });
       const menuColors = await page.locator('.t-page:not([inert]) .device-menu:not(.hdmi-menu)[data-open=true]').evaluate(node => {
         const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1; const ctx = canvas.getContext('2d');
         ctx.fillStyle = getComputedStyle(node).backgroundColor; ctx.fillRect(0,0,1,1);

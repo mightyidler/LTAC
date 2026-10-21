@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 
 // Run after uploading this signed installer to the matching GitHub Release.
@@ -19,5 +19,7 @@ const manifest = {
     },
   },
 };
-await writeFile(new URL('../update.json', import.meta.url), `${JSON.stringify(manifest, null, 2)}\n`);
-console.log(`Prepared update.json for LTAC ${config.version}.`);
+const output = new URL('../local/release/', import.meta.url);
+await mkdir(output, { recursive: true });
+await writeFile(new URL('update.json', output), `${JSON.stringify(manifest, null, 2)}\n`);
+console.log(`Prepared local/release/update.json for LTAC ${config.version}.`);

@@ -59,7 +59,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://raw.githubusercontent.com/mightyidler/LTAC/main/update.json"
+        "https://github.com/mightyidler/LTAC/releases/latest/download/update.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVFNjM2NkE0OEYzNzlERjMKUldUem5UZVBwR1pqN282Wm5icVhHd2YvSXF5aHV5Tm5mVythc2x1OG9YcnB6M0VGbm81TWtkSDEK",
       "windows": {

@@ -114,7 +114,7 @@ try {
     const more=first.locator('.device-menu:not(.hdmi-menu)');
     assert.equal(await menu.getAttribute('data-open'),'false','Only one device menu can be open');
     const moreGeometry=await more.evaluate(n=>({width:n.offsetWidth,height:n.offsetHeight,radius:getComputedStyle(n).borderRadius,gap:getComputedStyle(n.querySelector('.t-morph-menu')).gap}));
-    assert.deepEqual(moreGeometry,{width:140,height:84,radius:'23px',gap:'4px'},'More menu has a 4px item gap and matching height');
+    assert.deepEqual(moreGeometry,{width:140,height:76,radius:'20px',gap:'4px'},'More menu fits two 32px rows, a 4px gap and 4px outer padding');
     assert.deepEqual(errors,[]);
     await context.close();
   }

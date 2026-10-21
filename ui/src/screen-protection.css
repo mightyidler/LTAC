@@ -1,0 +1,24 @@
+.screen-section { margin-top: 16px; }
+.screen-section .shortcut-setting { padding-bottom: 0; }
+.screen-time-controls { padding-bottom: 16px; }
+.screen-time-setting { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.screen-time-setting > p { font-size: 15px; line-height: 20px; font-weight: var(--font-weight-copy); color: var(--text-primary); }
+#screen-time { --shortcut-surface-dur: var(--resize-dur); --shortcut-resize-delay: 0ms; flex-shrink: 0; }
+#screen-time-value { max-width: none; }
+.screen-time-menu.device-menu { --screen-menu-max-height: 256px; --morph-close-dur: var(--resize-dur); position: fixed; z-index: 25; right: auto; width: var(--screen-trigger-width); height: var(--screen-trigger-height); max-height: min(var(--screen-menu-max-height), calc(100vh - 32px)); border-radius: 8px; translate: var(--screen-close-x, 0px) var(--screen-close-y, 0px); transition: width var(--morph-close-dur) var(--morph-close-ease), height var(--morph-close-dur) var(--morph-close-ease), border-radius var(--morph-close-dur) var(--morph-close-ease), translate var(--morph-close-dur) var(--morph-close-ease); }
+.screen-time-menu.device-menu[data-open="true"] { width: var(--menu-open-width); height: var(--menu-open-height); border-radius: var(--morph-r-open); translate: var(--screen-menu-x) var(--screen-menu-y); transition: width var(--morph-open-dur) var(--morph-ease), height var(--morph-open-dur) var(--morph-ease), border-radius var(--morph-open-dur) var(--morph-ease), translate var(--morph-open-dur) var(--morph-ease); }
+.screen-time-menu.device-menu .t-morph-plus { width: var(--screen-trigger-width); height: var(--screen-trigger-height); font-size: 13px; color: var(--text-control); white-space: nowrap; }
+.screen-time-menu.device-menu .t-morph-menu { inset: 0 auto auto 0; width: var(--menu-open-width); height: var(--menu-open-height); overflow: hidden; overscroll-behavior: contain; scrollbar-width: none; }
+.screen-time-menu .app-scrollbar::-webkit-scrollbar { display: none; width: 0; }
+.screen-time-menu.device-menu[data-scroll-ready="true"] .t-morph-menu { overflow-y: auto; }
+.screen-time-menu.device-menu [role="menuitemradio"] { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: 0 0 auto; padding: 8px; border-radius: 16px; background: transparent; color: var(--text-secondary); font-size: 13px; line-height: 16px; white-space: nowrap; text-align: left; transition: color var(--duration-quick) var(--ease-in-out); }
+.screen-time-menu.device-menu [role="menuitemradio"][aria-checked="true"] { color: var(--text-primary); }
+.screen-time-menu.device-menu [role="menuitemradio"]:is(:hover, :focus-visible) { background: var(--surface-subtle); color: var(--text-primary); outline: none; }
+.screen-preset-check { display: grid; width: 16px; height: 16px; opacity: 0; }
+.screen-preset-check svg { width: 16px; height: 16px; }
+[aria-checked="true"] > .screen-preset-check { opacity: 1; }
+.screen-time-scrollbar { position: absolute; z-index: 1; top: var(--morph-r-open); bottom: var(--morph-r-open); right: 2px; width: 2px; opacity: 0; pointer-events: none; touch-action: none; transition: opacity var(--duration-quick) var(--ease-smooth-out); }
+.screen-time-menu[data-scroll-ready="true"] .screen-time-scrollbar[data-scrollable="true"] { opacity: 1; pointer-events: auto; }
+.screen-time-scrollbar-thumb { width: 100%; border-radius: 2px; background: var(--scrollbar); }
+.screen-time-scrollbar:is(:hover, [data-dragging="true"]) .screen-time-scrollbar-thumb { background: var(--scrollbar-hover); }
+@media (prefers-reduced-motion: reduce) { #screen-time, .screen-time-scrollbar { transition: none !important; } }

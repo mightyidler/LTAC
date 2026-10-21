@@ -14,6 +14,7 @@ use tokio::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Event {
+    ScreenProtection(crate::screen_protection::Signal),
     DisplayTopologyChanged,
     NetworkChanged,
     SessionLocked,
@@ -88,6 +89,7 @@ impl State {
             | Event::DisplayTopologyChanged
             | Event::SessionLocked
             | Event::SessionUnlocked => None,
+            Event::ScreenProtection(_) => None,
         };
         if let Some(desired) = desired
             && self.desired != Some(desired)
@@ -303,14 +305,37 @@ pub async fn run_with_initial(
 pub async fn run_with_policy(
     config: &Config,
     journal: &mut Journal,
-    mut receiver: NoticeReceiver,
+    receiver: NoticeReceiver,
     observe_only: bool,
     initial: Option<Initial>,
     keep_tv_on: bool,
 ) -> Result<()> {
+    run_with_screen_policy(
+        config,
+        journal,
+        receiver,
+        observe_only,
+        initial,
+        keep_tv_on,
+        true,
+    )
+    .await
+}
+
+pub async fn run_with_screen_policy(
+    config: &Config,
+    journal: &mut Journal,
+    mut receiver: NoticeReceiver,
+    observe_only: bool,
+    initial: Option<Initial>,
+    keep_tv_on: bool,
+    power_automatic: bool,
+) -> Result<()> {
     let journal = &mut journal.clone().best_effort();
     let (sender, mut targets) = watch::channel::<Option<Action>>(None);
     let (network_sender, mut networks) = watch::channel(0u64);
+    let (screen_sender, mut screens) = watch::channel(crate::screen_protection::Signal::Disabled);
+    let mut panel = crate::screen_protection::Panel::default();
     let mut event_log = journal.clone();
     let mut suppress_initial_display = initial.is_some();
     let mut applied = initial.as_ref().map(|i| i.target);
@@ -318,7 +343,18 @@ pub async fn run_with_policy(
     let off_attempted = AtomicBool::new(applied == Some(Target::Off));
     let collector = tokio::spawn(async move {
         let mut state = State::default();
+        let mut screen_session = crate::screen_protection::SessionPolicy::default();
         while let Some(notice) = receiver.recv().await {
+            if let Event::ScreenProtection(signal) = notice.event {
+                if screen_session.allowed() || signal == crate::screen_protection::Signal::Disabled
+                {
+                    screen_sender.send_replace(signal);
+                }
+                continue;
+            }
+            if screen_session.apply(notice.event) && !screen_session.allowed() {
+                screen_sender.send_replace(crate::screen_protection::Signal::Disabled);
+            }
             // Logging failure must not disable power handling during shutdown.
             let _ = event_log.record("windows_event", json!({"event":notice.event}));
             if notice.event == Event::NetworkChanged && !observe_only {
@@ -343,8 +379,9 @@ pub async fn run_with_policy(
                 if let Some(ack) = notice.suspend_ack {
                     let _ = ack.try_send(());
                 }
-            } else if let Some(target) = desired.or_else(|| {
-                matches!(notice.event, Event::Suspend | Event::SessionEnding).then_some(Target::Off)
+            } else if let Some(target) = desired.filter(|_| power_automatic).or_else(|| {
+                (power_automatic && matches!(notice.event, Event::Suspend | Event::SessionEnding))
+                    .then_some(Target::Off)
             }) {
                 sender.send_replace(Some(Action {
                     target,
@@ -372,7 +409,25 @@ pub async fn run_with_policy(
 
     loop {
         tokio::select! {
+            biased;
             changed = targets.changed() => { if changed.is_err() { break; } }
+            changed = screens.changed() => {
+                if changed.is_err() { break; }
+                let signal = *screens.borrow_and_update();
+                let (cancelled, power_event) = {
+                let operation = panel.apply(signal, config, &mut prepared, journal);
+                tokio::pin!(operation);
+                tokio::select! {
+                    biased;
+                    _ = targets.changed() => (true, true),
+                    _ = screens.changed() => (true, false),
+                    result = &mut operation => { if let Err(error) = result { eprintln!("Panel request failed: {error:#}"); } (false, false) }
+                }
+                };
+                if cancelled { prepared = None; panel.invalidate(); }
+                if cancelled && !power_event { screens.mark_changed(); }
+                if !power_event { continue; }
+            }
             changed = networks.changed() => {
                 if changed.is_err() { break; }
                 if config.device.is_none() { continue; }
@@ -401,6 +456,7 @@ pub async fn run_with_policy(
             } => {
                 if let Err(e) = result {
                     prepared = None;
+                    panel.disconnected();
                     journal.record("idle_connection_closed", json!({"error":e.to_string()}))?;
                 }
                 continue;
@@ -409,6 +465,7 @@ pub async fn run_with_policy(
         let Some(mut action) = targets.borrow_and_update().clone() else {
             continue;
         };
+        panel.invalidate();
         loop {
             // Only duplicate intentions are coalesced. Real transitions start
             // immediately; a possibly transmitted OFF survives cancellation.
@@ -515,7 +572,7 @@ pub async fn run_with_policy(
                     action.acknowledge();
                     journal.record("sync_action_finished", json!({"target":target, "success":result.is_ok(), "error":result.as_ref().err().map(|e|format!("{e:#}"))}))?;
                     match result {
-                        Ok((session, performed)) => { prepared = session; applied = performed.then_some(target); },
+                        Ok((session, performed)) => { prepared = session; applied = performed.then_some(target); if target == Target::On && performed { panel = Default::default(); } },
                         Err(e) => { applied = None; eprintln!("Sync {target:?} failed: {e:#}"); }
                     }
                     break;

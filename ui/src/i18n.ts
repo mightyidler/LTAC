@@ -2,6 +2,18 @@ let language: 'ko' | 'en' | 'ja' = 'ko';
 export function setTranslationLanguage(value: 'ko' | 'en' | 'ja') { language = value; }
 
 export const messages = {
+  '화면 보호 권한이 없습니다. TV를 다시 연결해 권한을 승인해주세요.': { en: 'Screen protection permission is missing. Reconnect your TV and approve access.', ja: '画面保護の権限がありません。TVを再接続してアクセスを許可してください。' },
+  '화면 보호 요청을 완료하지 못했어요. TV와 연결 상태를 확인해주세요.': { en: 'Screen protection failed. Check your TV and connection.', ja: '画面保護の要求を完了できませんでした。TVと接続状態を確認してください。' },
+  '화면 보호': { en: 'Screen protection', ja: '画面保護' },
+  '자동 화면 보호': { en: 'Automatic screen protection', ja: '自動画面保護' },
+  'PC 미사용 시 화면을 끕니다': { en: 'Turns the screen off when your PC is idle', ja: 'PCを使用していないときに画面を消します' },
+  '화면 보호 시작 시간': { en: 'Screen protection delay', ja: '画面保護の開始時間' },
+  '화면 보호 단축키': { en: 'Screen protection shortcut', ja: '画面保護ショートカット' },
+  'PC 단축키로 TV 화면을 끄고 켭니다': { en: 'Turn the TV screen off and on with a PC shortcut', ja: 'PCのショートカットでTV画面を消灯・点灯します' },
+  '분': { en: 'm', ja: '分' },
+  '초': { en: 's', ja: '秒' },
+  '이미 다른 LTAC 단축키에 지정된 조합입니다.': { en: 'This combination is already assigned to another LTAC shortcut.', ja: 'この組み合わせは別のLTACショートカットに割り当てられています。' },
+  '화면 보호 시간은 10초에서 30분 사이로 지정해주세요.': { en: 'Choose a screen protection delay between 10 seconds and 30 minutes.', ja: '画面保護の開始時間は10秒から30分の間で指定してください。' },
   "HDMI 선택": {
     "en": "Select HDMI",
     "ja": "HDMIを選択"

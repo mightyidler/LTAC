@@ -69,6 +69,7 @@ struct Envelope {
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
+    Screen(crate::screen_protection::Signal),
     On,
     Off,
     Refresh,
@@ -84,6 +85,7 @@ struct Work {
 // All devices share one policy and cancellation boundary, but retain separate
 // authenticated sockets and OFF evidence. A slow TV never delays another TV.
 struct DeviceControl {
+    panel: crate::screen_protection::Panel,
     config: Config,
     session: Option<Session>,
     off_attempted: AtomicBool,
@@ -111,6 +113,7 @@ impl Fleet {
             devices
                 .into_iter()
                 .map(|config| DeviceControl {
+                    panel: Default::default(),
                     config,
                     session: None,
                     off_attempted: AtomicBool::new(false),
@@ -140,6 +143,7 @@ impl Fleet {
         for device in &mut self.0 {
             if device.io_started {
                 device.session = None;
+                device.panel.invalidate();
             }
         }
     }
@@ -174,9 +178,19 @@ impl Fleet {
         let results = futures_util::future::join_all(self.0.iter_mut().map(|device| {
             let mut journal = journal.clone();
             let local_view = RwLock::new(initial.clone());
+            let initial_power = initial.power.clone();
             async move {
                 sleep(work.delay).await;
                 device.io_started = true;
+                if let Kind::Screen(signal) = work.kind {
+                    let result = device
+                        .panel
+                        .apply(signal, &device.config, &mut device.session, &mut journal)
+                        .await;
+                    device.io_started = false;
+                    return result.map(|_| initial_power);
+                }
+                device.panel.invalidate();
                 if matches!(work.kind, Kind::On) {
                     anyhow::ensure!(!crate::lifecycle::is_ending(), "Windows session is ending");
                     device.off_attempted.store(false, Ordering::Release);
@@ -196,6 +210,9 @@ impl Fleet {
                 .await;
                 if result.is_err() {
                     device.session = None;
+                }
+                if result.is_ok() && matches!(work.kind, Kind::On) {
+                    device.panel = Default::default();
                 }
                 // Other devices may still be working when a new event arrives.
                 // A completed exchange no longer needs cancellation cleanup.
@@ -243,6 +260,7 @@ impl Fleet {
         };
         if result.is_err() {
             self.0[index].session = None;
+            self.0[index].panel.disconnected();
         }
         Ok(result?)
     }
@@ -634,6 +652,7 @@ async fn perform(
     check_input: bool,
 ) -> Result<()> {
     match work.kind {
+        Kind::Screen(_) => unreachable!("Panel requests use the retained device connection"),
         Kind::On => {
             // Reuse a healthy socket instead of waking an already active TV.
             let already_on = if let Some(session) = cache.as_mut() {
@@ -777,6 +796,7 @@ fn command_work(
 ) -> Option<Work> {
     let Envelope { request, reply } = envelope;
     let kind = match request {
+        Request::ScreenProtection { signal, .. } => Kind::Screen(signal),
         Request::On => Kind::On,
         Request::Off | Request::Sleep => Kind::Off,
         Request::Refresh if !active => Kind::Refresh,
@@ -924,7 +944,16 @@ async fn run() -> Result<()> {
     let mut configuration: Option<Envelope> = None;
     let mut suspend_ack: Option<std::sync::mpsc::SyncSender<()>> = None;
     let mut repair_attempts = 0u32;
+    let mut screen_sequence = crate::screen_protection::Sequence::default();
+    let mut screen_owner_changed = false;
+    let mut screen_session = crate::screen_protection::SessionPolicy::default();
     loop {
+        if screen_owner_changed {
+            for device in &mut fleet.0 {
+                device.panel = Default::default();
+            }
+            screen_owner_changed = false;
+        }
         if *stop.borrow() != 0 {
             break;
         }
@@ -996,11 +1025,11 @@ async fn run() -> Result<()> {
                 s.power = match current.kind {
                     Kind::On => "waking",
                     Kind::Off => "turning_off",
-                    Kind::Refresh => &s.power,
+                    Kind::Refresh | Kind::Screen(_) => &s.power,
                 }
                 .into();
             });
-            let _ = journal.record("service_action_started", json!({"kind":match current.kind { Kind::On => "on", Kind::Off => "off", Kind::Refresh => "refresh" }, "automatic":is_auto}));
+            let _ = journal.record("service_action_started", json!({"kind":match current.kind { Kind::On => "on", Kind::Off => "off", Kind::Refresh => "refresh", Kind::Screen(_) => "panel" }, "automatic":is_auto}));
             let action_log = journal.clone();
             let fleet_empty = fleet.0.is_empty();
             let wake_available = fleet.wake_available();
@@ -1016,13 +1045,27 @@ async fn run() -> Result<()> {
                         result = &mut server_task => { result??; bail!("Service IPC stopped unexpectedly"); }
                         notice = events.recv() => {
                             let notice = notice.context("Service events closed")?;
+                            screen_session.apply(notice.event);
+                            let panel_cancel = matches!(current.kind, Kind::Screen(_)) && !screen_session.allowed();
                             let _ = journal.record("windows_event", json!({"event":notice.event}));
                             let (next, ack) = event_work(notice, &mut state, settings.automatic && !fleet_empty, &view);
                             if let Some(next) = next { work = Some(next); if let Some(old) = suspend_ack.take() { let _ = old.try_send(()); } suspend_ack = ack; break None; }
                             if let Some(ack) = ack { let _ = ack.try_send(()); }
+                            if panel_cancel { work = None; break None; }
                         }
                         envelope = commands.recv() => {
                             let envelope = envelope.context("Service commands closed")?;
+                            if let Request::ScreenProtection { sequence, source, .. } = envelope.request {
+                                match screen_sequence.accept(source, sequence) {
+                                    None => { let _ = envelope.reply.send(Response { snapshot: snapshot(&view)?, error: None }); continue; }
+                                    Some(true) => screen_owner_changed = true,
+                                    Some(false) => {}
+                                }
+                            }
+                            if matches!(envelope.request, Request::ScreenProtection { .. }) && !matches!(current.kind, Kind::Screen(_)) {
+                                let _ = envelope.reply.send(Response { snapshot: snapshot(&view)?, error: Some("Power control has priority over panel control".into()) });
+                                continue;
+                            }
                             if let Request::Configure { devices } = &envelope.request {
                                 match fingerprint(devices) {
                                     Ok(value) if value == active_fingerprint => {
@@ -1073,7 +1116,7 @@ async fn run() -> Result<()> {
             if let Some(result) = completed {
                 let error = result.err().map(|e| format!("{e:#}"));
                 let _ = journal.record("service_action_finished", json!({"success":error.is_none(), "error":error, "off_may_have_been_sent":off_attempted}));
-                if error.is_some() {
+                if error.is_some() && !matches!(current.kind, Kind::Screen(_)) {
                     edit(&view, |s| {
                         s.power = "unknown".into();
                         s.error = error.clone();
@@ -1098,14 +1141,16 @@ async fn run() -> Result<()> {
                 }
                 reply(&mut current, followers, &view, error);
             } else {
-                edit(&view, |s| {
-                    s.power = if off_attempted {
-                        "off_requested"
-                    } else {
-                        "unknown"
-                    }
-                    .into()
-                });
+                if !matches!(current.kind, Kind::Screen(_)) {
+                    edit(&view, |s| {
+                        s.power = if off_attempted {
+                            "off_requested"
+                        } else {
+                            "unknown"
+                        }
+                        .into()
+                    });
+                }
                 reply(
                     &mut current,
                     followers,
@@ -1123,6 +1168,9 @@ async fn run() -> Result<()> {
             result = &mut server_task => { result??; bail!("Service IPC stopped unexpectedly"); }
             notice = events.recv() => {
                 let notice = notice.context("Service events closed")?;
+                if screen_session.apply(notice.event) && !screen_session.allowed() {
+                    for device in &mut fleet.0 { device.panel.invalidate(); }
+                }
                 let _ = journal.record("windows_event", json!({"event":notice.event}));
                 // A late NIC becoming available re-arms a failed desired ON,
                 // while an OFF policy never wakes the TV merely for discovery.
@@ -1133,6 +1181,17 @@ async fn run() -> Result<()> {
             }
             envelope = commands.recv() => {
                 let envelope = envelope.context("Service commands closed")?;
+                if let Request::ScreenProtection { sequence, source, .. } = envelope.request {
+                    match screen_sequence.accept(source, sequence) {
+                        None => { let _ = envelope.reply.send(Response { snapshot: snapshot(&view)?, error: None }); continue; }
+                        Some(true) => { for device in &mut fleet.0 { device.panel = Default::default(); } }
+                        Some(false) => {}
+                    }
+                }
+                if matches!(envelope.request, Request::ScreenProtection { signal, .. } if signal != crate::screen_protection::Signal::Disabled) && (!screen_session.allowed() || state.is_ending() || state.desired_target() == Some(Target::Off) || crate::lifecycle::is_ending()) {
+                    let _ = envelope.reply.send(Response { snapshot: snapshot(&view)?, error: None });
+                    continue;
+                }
                 if matches!(envelope.request, Request::Configure { .. }) {
                     configuration = Some(envelope); continue;
                 }
@@ -1738,5 +1797,81 @@ mod tests {
             &view,
         );
         assert!(matches!(work.unwrap().kind, Kind::On));
+    }
+
+    #[tokio::test]
+    async fn panel_failure_is_independent_and_successful_devices_keep_their_owned_session() {
+        use crate::screen_protection::{Mode, Signal};
+        let mut fleet = Fleet::new(vec![config(1), config(2)]).unwrap();
+        let mut remotes = Vec::new();
+        for (index, device) in fleet.0.iter_mut().enumerate() {
+            device.config.pc_hdmi = Some(2);
+            let (session, mut peer) = crate::ssap::tests::peer().await;
+            device.session = Some(session);
+            remotes.push(tokio::spawn(async move {
+                for (uri, payload) in [
+                    (crate::ssap::POWER_STATE, json!({"state":"Active"})),
+                    (
+                        crate::ssap::FOREGROUND_APP,
+                        json!({"returnValue":true,"appId":"com.webos.app.hdmi2"}),
+                    ),
+                    (crate::ssap::SCREEN_OFF, json!({"returnValue":index == 1})),
+                ] {
+                    let frame = peer.next().await.unwrap().unwrap();
+                    let frame: serde_json::Value =
+                        serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                    assert_eq!(frame["uri"], uri);
+                    peer.send(Message::Text(
+                        json!({"type":"response","id":frame["id"],"payload":payload})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .unwrap();
+                }
+                if index == 1 {
+                    for (uri, payload) in [
+                        (crate::ssap::POWER_STATE, json!({"state":"Screen Off"})),
+                        (
+                            crate::ssap::FOREGROUND_APP,
+                            json!({"returnValue":true,"appId":"com.webos.app.hdmi2"}),
+                        ),
+                        (crate::ssap::SCREEN_ON, json!({"returnValue":true})),
+                    ] {
+                        let frame = peer.next().await.unwrap().unwrap();
+                        let frame: serde_json::Value =
+                            serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                        assert_eq!(frame["uri"], uri);
+                        peer.send(Message::Text(
+                            json!({"type":"response","id":frame["id"],"payload":payload})
+                                .to_string()
+                                .into(),
+                        ))
+                        .await
+                        .unwrap();
+                    }
+                }
+                while let Some(Ok(frame)) = peer.next().await {
+                    assert!(!frame.is_text());
+                }
+            }));
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::open(&dir.path().join("panel.jsonl")).unwrap();
+        let view = view();
+        let mut work = Work::target(Target::On, false);
+        work.kind = Kind::Screen(Signal::Idle);
+        assert!(fleet.perform(&work, &journal, &view).await.is_err());
+        assert_eq!(fleet.0[0].panel.mode, Mode::Uncertain);
+        assert_eq!(fleet.0[1].panel.mode, Mode::AutoScreenOff);
+        assert!(fleet.0[1].session.is_some());
+        fleet.perform(&work, &journal, &view).await.unwrap();
+        work.kind = Kind::Screen(Signal::Active);
+        fleet.perform(&work, &journal, &view).await.unwrap();
+        assert_eq!(fleet.0[1].panel.mode, Mode::Idle);
+        fleet.clear_sessions();
+        for remote in remotes {
+            remote.await.unwrap();
+        }
     }
 }

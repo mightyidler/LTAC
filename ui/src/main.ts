@@ -19,6 +19,10 @@ import './thinking-states.css';
 import './status-appearance.css';
 import './hdmi-menu.css';
 import { icons } from './icons';
+import { screenMarkup, screenTimeLabel, screenTimeOptions } from './screen-protection';
+import { updateScreenTimeLabel, fitScreenTimeClose, copyScreenTimeLabel, trackScreenTimeClose, followScreenTimeClose, stopScreenTimeClose, mountScreenTimeScrollbar, unmountScreenTimeScrollbar } from './screen-time-control';
+import './number-pop-in.css';
+import './screen-protection.css';
 
 // Prepare preview styles and both text weights before the first visible screen.
 const previewModule = !desktop && import.meta.env.DEV ? await import('../dev/preview') : null;
@@ -55,6 +59,9 @@ let pairingToken: number | null = null;
 let pendingPairSnapshot: Snapshot | null = null;
 let indicator: ConnectionIndicator | null = null;
 let capture = false;
+let captureTarget: 'sleep' | 'screen' = 'sleep';
+let screenDraft: number | null = null;
+let screenSaveTimer: ReturnType<typeof setTimeout> | undefined;
 let shortcutSaving = false;
 let shortcutHint = t("키를 눌러주세요");
 let activeMenu: HTMLElement | null = null;
@@ -79,6 +86,7 @@ const action = (text: string, id: string, primary = false, disabled = false) => 
 
 function mount(key: string, html: string, backward = false) {
   if (view === key) return false;
+  if (view === 'home' && screenDraft !== null) queueScreenTime(0);
   closeMenu(); capture = false; shortcutSaving = false; toast.hide(true); lastError = null; indicator?.destroy(); indicator = null;
   const initial = !hasMounted; hasMounted = true;
   const previous = current(); previous.inert = true;
@@ -271,11 +279,15 @@ async function pair(args: Record<string, unknown>, label: string) {
   catch { await finishConnection({ ...state, stage: 'pair_error', busy: false }, token); }
 }
 function updateShortcutButton() {
-  const button = el<HTMLButtonElement>('shortcut');
-  button.setAttribute('aria-pressed', String(capture));
-  button.setAttribute('aria-busy', String(shortcutSaving));
-  const waitingForShortcut = capture && shortcutHint === t("키를 눌러주세요");
-  swapShortcutLabel(button, capture ? shortcutHint : state.shortcut ? shortcutLabel(state.shortcut) : t("단축키 지정"), capture, waitingForShortcut, waitingForShortcut);
+  updateShortcut('shortcut', state.shortcut, capture && captureTarget === 'sleep');
+  if (document.getElementById('screen-shortcut')) updateShortcut('screen-shortcut', state.screen_shortcut, capture && captureTarget === 'screen');
+}
+function updateShortcut(id: string, value: string | null, capturing: boolean) {
+  const button = el<HTMLButtonElement>(id);
+  button.setAttribute('aria-pressed', String(capturing));
+  button.setAttribute('aria-busy', String(capturing && shortcutSaving));
+  const waitingForShortcut = capturing && shortcutHint === t("키를 눌러주세요");
+  swapShortcutLabel(button, capturing ? shortcutHint : value ? shortcutLabel(value) : t("단축키 지정"), capturing, waitingForShortcut, waitingForShortcut);
 }
 function updateUpdateButton() {
   const button = el<HTMLButtonElement>('check-update');
@@ -330,8 +342,25 @@ function renderHome(backward: boolean) {
   const mounted = mount('home', `<div class="page-scroll home-scroll"><section class="device-section"><h2>${t("기기 목록")}</h2><div id="saved-devices" class="saved-devices"></div><div id="home-devices-empty" class="home-devices-empty" data-open="${state.devices.length === 0}" aria-hidden="${state.devices.length > 0}"><div><p>${t("연결된 기기가 없습니다")}</p></div></div></section><section class="settings-section"><h2>${t("전원")}</h2><div class="setting-row"><div class="setting-copy"><p>${t("전원 동기화")}</p><small>${t("PC 전원에 맞춰 TV도 자동으로 켜지고 꺼집니다")}</small></div>${toggle('automatic', state.automatic, t("전원 동기화"))}</div><div class="divider"></div><div class="setting-row"><div class="setting-copy"><p>${t("TV 단독 사용 시 전원 유지")}</p><small>${t("PC가 아닌 TV 화면을 사용 중일 때는 TV를 끄지 않습니다")}</small></div>${toggle('keep-tv-on', state.keep_tv_on, t("TV 단독 사용 시 전원 유지"))}</div><div class="divider"></div><div class="shortcut-group"><div class="setting-row"><div class="setting-copy"><p>${t("절전 단축키")}</p><small>${t("PC와 TV를 함께 절전 상태로 전환합니다")}</small></div>${toggle('shortcut-enabled', state.shortcut_enabled, t("절전 단축키"))}</div><div id="shortcut-settings" class="t-acc shortcut-panel" data-open="${state.shortcut_enabled}"><div class="t-acc-panel"><div class="t-acc-panel-inner"><div class="shortcut-setting"><p>${t("단축키 설정")}</p><button id="shortcut" class="shortcut-button"><span id="shortcut-label" class="t-text-swap">${escape(state.shortcut ? shortcutLabel(state.shortcut) : t("단축키 지정"))}</span></button></div></div></div></div></div></section></div>`, backward);
   if (mounted) {
     const settings = current().querySelector<HTMLElement>('.settings-section')!;
+    settings.insertAdjacentHTML('afterend', screenMarkup(state.screen_enabled, state.screen_shortcut_enabled));
     settings.insertAdjacentHTML('afterend', `<section class="general-section"><h2>${t('일반')}</h2><div class="setting-row preference-row"><span id="language-label" class="setting-copy">${t('언어')}</span><button id="language-setting" class="preference-link" aria-labelledby="language-label language-value"><span id="language-value" class="preference-value">${languageNames[language]}</span>${chevron}</button></div><div class="divider"></div><div class="setting-row preference-row"><span id="theme-label" class="setting-copy">${t('테마')}</span><button id="theme-setting" class="preference-link" aria-labelledby="theme-label theme-value"><span id="theme-value" class="preference-value">${themeName(theme)}</span>${chevron}</button></div></section><section class="about-section"><div class="setting-row update-row"><div class="setting-copy"><p>LTAC</p><small id="app-version" class="t-text-swap">${escape(appUpdate.version)}</small></div><button id="check-update" class="shortcut-button"><span class="t-text-swap" aria-live="polite" aria-atomic="true">${t(appUpdate.label)}</span></button></div></section>`);
     for (const page of ['language', 'theme'] as const) el(`${page}-setting`).onclick = () => { preferencePage = page; render(); };
+    // The screen section precedes General in the home layout.
+    const section = current().querySelector('.screen-section')!;
+    settings.after(section);
+    el('screen-enabled').onclick = () => void saveScreen({ enabled: !state.screen_enabled });
+    el('screen-shortcut-enabled').onclick = () => void saveScreen({ shortcutEnabled: !state.screen_shortcut_enabled });
+    el('screen-shortcut').onclick = () => {
+      if (shortcutSaving) return;
+      captureTarget = 'screen'; capture = true; shortcutHint = t('키를 눌러주세요');
+      updateShortcutButton(); el('screen-shortcut').focus({ preventScroll: true }); toast.hide();
+    };
+    el('screen-shortcut').onblur = () => {
+      if (!capture || captureTarget !== 'screen' || shortcutSaving) return;
+      capture = false; updateShortcutButton();
+    };
+    el('screen-time').onclick = event => { event.stopPropagation(); openScreenTime(); };
+    for (const id of ['screen-enabled', 'screen-shortcut-enabled', 'screen-shortcut', 'screen-time']) el(id).tabIndex = 0;
     refreshWindowLabels();
     disableTabStops(settings);
     el('check-update').onclick = () => void appUpdate.check();
@@ -344,13 +373,13 @@ function renderHome(backward: boolean) {
     el('shortcut-enabled').onclick = async () => { await run('set_shortcut', { enabled: !state.shortcut_enabled, shortcut: state.shortcut }); if (view === 'home') renderHome(false); };
     el('shortcut').onclick = () => {
       if (shortcutSaving) return;
-      capture = true; shortcutHint = t("키를 눌러주세요");
+      captureTarget = 'sleep'; capture = true; shortcutHint = t("키를 눌러주세요");
       updateShortcutButton();
       el('shortcut').focus({ preventScroll: true });
       toast.hide();
     };
     el('shortcut').onblur = () => {
-      if (!capture || shortcutSaving) return;
+      if (!capture || captureTarget !== 'sleep' || shortcutSaving) return;
       capture = false; updateShortcutButton();
     };
   }
@@ -411,13 +440,13 @@ function renderHome(backward: boolean) {
   const emptyNotice = el('home-devices-empty');
   emptyNotice.dataset.open = String(empty);
   emptyNotice.setAttribute('aria-hidden', String(!empty));
-  for (const [id, on] of [['automatic', state.automatic], ['keep-tv-on', state.keep_tv_on], ['shortcut-enabled', state.shortcut_enabled]] as const) {
+  for (const [id, on] of [['automatic', state.automatic], ['keep-tv-on', state.keep_tv_on], ['shortcut-enabled', state.shortcut_enabled], ['screen-enabled', state.screen_enabled], ['screen-shortcut-enabled', state.screen_shortcut_enabled]] as const) {
     const button = el<HTMLButtonElement>(id);
-    if (button.dataset.on !== String(on)) button.classList.add('is-init');
-    button.dataset.on = String(on); button.setAttribute('aria-checked', String(on)); button.disabled = localBusy;
+    button.dataset.on = String(on);
+    button.setAttribute('aria-checked', String(on)); button.disabled = localBusy;
   }
   const settings = el('shortcut-settings');
-  if (!state.shortcut_enabled && capture) {
+  if (!state.shortcut_enabled && capture && captureTarget === 'sleep') {
     capture = false; toast.hide();
     if (settings.contains(document.activeElement)) el('shortcut-enabled').focus({ preventScroll: true });
   }
@@ -425,16 +454,101 @@ function renderHome(backward: boolean) {
   settings.inert = !state.shortcut_enabled;
   settings.setAttribute('aria-hidden', String(!state.shortcut_enabled));
   el('shortcut-enabled').setAttribute('aria-controls', 'shortcut-settings');
+  for (const [id, open, trigger] of [['screen-settings', state.screen_enabled, 'screen-enabled'], ['screen-shortcut-settings', state.screen_enabled && state.screen_shortcut_enabled, 'screen-shortcut-enabled']] as const) {
+    const panel = el(id);
+    if (!open && panel.contains(document.activeElement)) el(trigger).focus({ preventScroll: true });
+    panel.dataset.open = String(open); panel.inert = !open; panel.setAttribute('aria-hidden', String(!open));
+    el(trigger).setAttribute('aria-controls', id);
+  }
+  if ((!state.screen_enabled || !state.screen_shortcut_enabled) && captureTarget === 'screen') capture = false;
+  if (!state.screen_enabled && activeMenu?.classList.contains('screen-time-menu')) closeMenu();
+  updateScreenTime();
   updateShortcutButton();
   updateUpdateButton();
   reportError(state.error);
+}
+async function saveScreen(patch: Record<string, unknown> = {}, announce = true): Promise<boolean> {
+  const saved = await run('set_screen_protection', {
+    enabled: state.screen_enabled, timeoutSeconds: screenDraft ?? state.screen_timeout_seconds,
+    shortcutEnabled: state.screen_shortcut_enabled, shortcut: state.screen_shortcut, ...patch,
+  }, announce);
+  if (view === 'home') renderHome(false);
+  return saved;
+}
+function queueScreenTime(delay = 200) {
+  clearTimeout(screenSaveTimer);
+  screenSaveTimer = setTimeout(async () => {
+    if (screenDraft === null) return;
+    if (localBusy) { queueScreenTime(); return; }
+    const value = screenDraft;
+    const saved = await saveScreen({ timeoutSeconds: value });
+    if (screenDraft === value) screenDraft = null;
+    if (!saved || view === 'home') updateScreenTime();
+  }, delay);
+}
+function updateScreenTime() {
+  if (view !== 'home') return;
+  const value = screenDraft ?? state.screen_timeout_seconds;
+  const label = screenTimeLabel(value);
+  updateScreenTimeLabel(el<HTMLButtonElement>('screen-time'), label);
+  app.querySelectorAll<HTMLElement>('.screen-time-menu[data-closing="true"]').forEach(menu => fitScreenTimeClose(menu, el<HTMLButtonElement>('screen-time')));
+  if (activeMenu?.classList.contains('screen-time-menu')) {
+    activeMenu.querySelectorAll<HTMLElement>('[role=menuitemradio]').forEach(item => item.setAttribute('aria-checked', String(Number(item.dataset.seconds) === value)));
+  }
+}
+function openScreenTime() {
+  const wasOpen = activeMenu?.classList.contains('screen-time-menu'); closeMenu();
+  if (wasOpen || localBusy) return;
+  const button = el<HTMLButtonElement>('screen-time');
+  const box = button.getBoundingClientRect();
+  const bounds = app.getBoundingClientRect();
+  const menu = document.createElement('div');
+  menu.className = 't-morph device-menu screen-time-menu'; menu.dataset.open = 'false';
+  const anchor = button.parentElement!.getBoundingClientRect();
+  menu.dataset.anchorTop = String(anchor.top); menu.dataset.anchorRight = String(anchor.right);
+  menu.dataset.viewportWidth = String(innerWidth); menu.dataset.viewportHeight = String(innerHeight);
+  const value = screenDraft ?? state.screen_timeout_seconds;
+  menu.innerHTML = `<div class="t-morph-menu app-scrollbar" role="menu" aria-labelledby="screen-time-label" inert>${screenTimeOptions(value).map(seconds => `<button role="menuitemradio" aria-checked="${seconds === value}" data-seconds="${seconds}"><span>${screenTimeLabel(seconds)}</span><span class="screen-preset-check" aria-hidden="true">${check}</span></button>`).join('')}</div><span class="t-morph-plus" aria-hidden="true">${escape(screenTimeLabel(value))}</span>`;
+  app.querySelector('.app-window')!.append(menu);
+  fitMenuWidth(menu);
+  mountScreenTimeScrollbar(menu);
+  const width = Math.max(box.width, parseFloat(menu.style.getPropertyValue('--menu-open-width')));
+  const height = Math.min(parseFloat(getComputedStyle(menu).getPropertyValue('--screen-menu-max-height')), bounds.height - 32);
+  menu.style.setProperty('--menu-open-height', `${height}px`);
+  menu.style.setProperty('--menu-open-width', `${width}px`);
+  menu.style.setProperty('--screen-trigger-width', `${box.width}px`);
+  menu.style.setProperty('--screen-trigger-height', `${box.height}px`);
+  const left = Math.max(bounds.left + 16, Math.min(box.left, bounds.right - width - 16));
+  const top = Math.max(bounds.top + 16, Math.min(box.top, bounds.bottom - height - 16));
+  menu.style.left = `${box.left}px`; menu.style.top = `${box.top}px`;
+  menu.style.setProperty('--screen-menu-x', `${left - box.left}px`);
+  menu.style.setProperty('--screen-menu-y', `${top - box.top}px`);
+  menu.style.transformOrigin = `${box.width / 2}px ${box.height / 2}px`;
+  copyScreenTimeLabel(menu, button);
+  menu.getBoundingClientRect();
+  button.style.visibility = 'hidden'; button.setAttribute('aria-expanded', 'true');
+  activeMenu = menu; menu.dataset.open = 'true';
+  menu.querySelector<HTMLElement>('[role=menu]')!.inert = false;
+  menu.querySelectorAll<HTMLButtonElement>('[role=menuitemradio]').forEach(item => item.onclick = () => {
+    screenDraft = Number(item.dataset.seconds); updateScreenTime(); closeMenu(true); queueScreenTime(0);
+  });
+  const selected = (menu.querySelector<HTMLElement>('[aria-checked=true]') ?? menu.querySelector<HTMLElement>('[role=menuitemradio]'))!;
+  const choices = menu.querySelector<HTMLElement>('[role=menu]')!;
+  selected.focus({ preventScroll: true });
+  choices.scrollTop = Math.max(0, selected.offsetTop - (height - selected.offsetHeight) / 2);
+  // Hidden trigger digits can still be popping during a fast reopen. Only the
+  // surface/list reveal determines when the scrollbar is safe to show.
+  void Promise.allSettled([...menu.getAnimations(), ...choices.getAnimations()].map(animation => animation.finished)).then(() => {
+    if (activeMenu === menu && menu.dataset.open === 'true') menu.dataset.scrollReady = 'true';
+  });
 }
 function fitMenuWidth(menu: HTMLElement) {
   const content = getComputedStyle(menu.querySelector<HTMLElement>('[role=menu]')!);
   const outerPadding = parseFloat(content.paddingLeft) + parseFloat(content.paddingRight);
   const widths = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role=menuitem], [role=menuitemradio]'), item => {
     const style = getComputedStyle(item);
-    const iconWidth = parseFloat(getComputedStyle(item.querySelector('svg')!).width);
+    const icon = item.querySelector('svg');
+    const iconWidth = icon ? parseFloat(getComputedStyle(icon).width) : 0;
     const textWidth = item.querySelector<HTMLElement>('span')!.scrollWidth;
     return outerPadding + parseFloat(style.paddingLeft) + iconWidth + parseFloat(style.columnGap) + textWidth + parseFloat(style.paddingRight);
   });
@@ -444,22 +558,54 @@ function fitMenuWidth(menu: HTMLElement) {
 function closeMenu(focus = false) {
   if (!activeMenu) return;
   const menu = activeMenu;
+  const screenTime = menu.classList.contains('screen-time-menu');
+  if (screenTime) {
+    fitScreenTimeClose(menu, el<HTMLButtonElement>('screen-time'));
+    unmountScreenTimeScrollbar(menu);
+  }
   const closing = {}; closingMenus.set(menu, closing);
   menu.dataset.closing = 'true'; menu.dataset.open = 'false';
+  if (screenTime) trackScreenTimeClose(menu, el<HTMLButtonElement>('screen-time'));
+  delete menu.dataset.scrollReady;
   menu.querySelector<HTMLElement>('[role=menu]')!.inert = true;
   const dropdown = menu.querySelector<HTMLElement>('.t-dropdown');
   dropdown?.classList.remove('is-open');
   dropdown?.classList.add('is-closing');
-  const button = menu.querySelector<HTMLButtonElement>('.more-button, .hdmi-button')!; button.setAttribute('aria-expanded', 'false');
-  if (focus) button.focus({ preventScroll: true }); activeMenu = null;
+  const button = menu.classList.contains('screen-time-menu') ? el<HTMLButtonElement>('screen-time') : menu.querySelector<HTMLButtonElement>('.more-button, .hdmi-button')!; button.setAttribute('aria-expanded', 'false');
+  if (focus && !screenTime) button.focus({ preventScroll: true }); activeMenu = null;
   // Preserve glass and stacking until the native surface transition finishes.
   // Cancelled/reversed animations cannot clean up a newer closing operation.
-  void Promise.allSettled((dropdown ?? menu).getAnimations().map(animation => animation.finished)).then(() => {
+  void (async () => {
+    do {
+      await Promise.allSettled((dropdown ?? menu).getAnimations().map(animation => animation.finished));
+    } while (screenTime && closingMenus.get(menu) === closing && menu.getAnimations().some(animation => animation.playState === 'running' || animation.pending));
     if (closingMenus.get(menu) === closing) {
       closingMenus.delete(menu); delete menu.dataset.closing;
       dropdown?.classList.remove('is-closing');
+      if (screenTime) {
+        followScreenTimeClose(menu); stopScreenTimeClose(menu);
+        button.style.removeProperty('visibility'); menu.remove();
+        if (focus) button.focus({ preventScroll: true });
+      }
     }
-  });
+  })();
+}
+function closeScreenTimeOnViewportChange(event: Event) {
+  const button = document.getElementById('screen-time');
+  const source = event.target;
+  // A menu's own native scrolling must not dismiss it. Only its trigger's
+  // scrolling ancestors (including the Web UI document) move the anchor.
+  if (!button || (source !== window && (!(source instanceof Node) || !source.contains(button)))) return;
+  const anchor = button.parentElement!.getBoundingClientRect();
+  // A click can auto-scroll the trigger into view before opening the menu, yet
+  // deliver that scroll event afterward. Dismiss only if its row really moved.
+  const menus = Array.from(app.querySelectorAll<HTMLElement>('.screen-time-menu')).filter(menu =>
+    Math.abs(anchor.top - Number(menu.dataset.anchorTop)) > .1 || Math.abs(anchor.right - Number(menu.dataset.anchorRight)) > .1
+    || innerWidth !== Number(menu.dataset.viewportWidth) || innerHeight !== Number(menu.dataset.viewportHeight));
+  for (const menu of menus) {
+    if (activeMenu === menu) closeMenu(menu.contains(document.activeElement));
+    else followScreenTimeClose(menu);
+  }
 }
 async function run(name: string, args?: Record<string, unknown>, announce = true) {
   if (localBusy) return false;
@@ -498,6 +644,8 @@ el('minimize').onclick = () => void windowAction('minimize');
 el('close').onclick = () => void windowAction('close');
 app.querySelector('header')!.addEventListener('pointerdown', event => { if (event.button === 0 && !(event.target as HTMLElement).closest('button')) void windowAction('drag'); });
 document.addEventListener('click', event => { if (activeMenu && !activeMenu.contains(event.target as Node)) closeMenu(); });
+window.addEventListener('scroll', closeScreenTimeOnViewportChange, { capture: true, passive: true });
+window.addEventListener('resize', closeScreenTimeOnViewportChange);
 window.addEventListener('keydown', async event => {
   if (capture) {
     event.preventDefault(); event.stopPropagation();
@@ -510,7 +658,9 @@ window.addEventListener('keydown', async event => {
     const token = generation;
     shortcutSaving = true; shortcutHint = t("저장 중");
     updateShortcutButton();
-    const saved = await run('set_shortcut', { enabled: state.shortcut_enabled, shortcut }, false);
+    const saved = captureTarget === 'screen'
+      ? await saveScreen({ shortcut }, false)
+      : await run('set_shortcut', { enabled: state.shortcut_enabled, shortcut }, false);
     if (token !== generation || view !== 'home') return;
     shortcutSaving = false; capture = !saved;
     if (!saved) { state.error = null; lastError = null; shortcutHint = t("다른 키 사용"); }
@@ -525,6 +675,7 @@ window.addEventListener('keydown', async event => {
     return;
   }
   if (activeMenu) {
+    if (event.key === 'Tab') closeMenu();
     if (event.key === 'Escape') { event.preventDefault(); closeMenu(true); }
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
       event.preventDefault(); const items = Array.from(activeMenu.querySelectorAll<HTMLButtonElement>('[role=menuitem], [role=menuitemradio]'));

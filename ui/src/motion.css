@@ -238,13 +238,12 @@
   --reel-spin-blur: 3px;
   --reel-stagger: 90ms;
   --reel-ease: cubic-bezier(0.16, 1, 0.3, 1);
-  /* Toggle */
-  --toggle-dur: 350ms;
-  --toggle-travel: 14.66px;
-  --toggle-ov1: 1px;
-  --toggle-ov2: 0px;
-  --toggle-track: 0ms;
-  --toggle-ease: cubic-bezier(0.34, 1.35, 0.64, 1);
+  /* Bald switch motion; travel fits LTAC's existing knob dimensions. */
+  --toggle-dur: 380ms;
+  --toggle-travel: 24px;
+  --toggle-track: 260ms;
+  --toggle-ease: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --toggle-press-scale: .9;
   /* Thinking states */
   --think-hold: 2000ms;
   --think-swap: 150ms;
@@ -429,27 +428,15 @@
   .t-page-slide .t-page { transition: none !important; }
 }
 
-/* transitions.dev: 27-toggle.md */
-.t-toggle { transition: background var(--toggle-track) var(--toggle-ease); }
-.t-toggle-thumb { translate: 0 0; will-change: translate; }
-.t-toggle[data-on="true"] .t-toggle-thumb { translate: var(--toggle-travel) 0; }
-.t-toggle.is-init[data-on="true"] .t-toggle-thumb { animation: t-toggle-on var(--toggle-dur) var(--toggle-ease) both; }
-.t-toggle.is-init[data-on="false"] .t-toggle-thumb { animation: t-toggle-off var(--toggle-dur) var(--toggle-ease) both; }
-@keyframes t-toggle-on {
-  0% { translate: 0 0; }
-  55% { translate: calc(var(--toggle-travel) + var(--toggle-ov1)) 0; }
-  80% { translate: calc(var(--toggle-travel) - var(--toggle-ov2)) 0; }
-  100% { translate: var(--toggle-travel) 0; }
-}
-@keyframes t-toggle-off {
-  0% { translate: var(--toggle-travel) 0; }
-  55% { translate: calc(0px - var(--toggle-ov1)) 0; }
-  80% { translate: var(--toggle-ov2) 0; }
-  100% { translate: 0 0; }
-}
+/* Bald: one reversible transform transition owns travel, press and release. */
+.t-toggle { transition: background-color var(--toggle-track) ease; }
+.t-toggle-thumb { transition: transform var(--toggle-dur) var(--toggle-ease); will-change: transform; }
+.t-toggle[data-on="true"] .t-toggle-thumb { transform: translateX(var(--toggle-travel)); }
+.t-toggle:active:not(:disabled) .t-toggle-thumb { transform: scaleX(var(--toggle-press-scale)); transform-origin: left center; }
+.t-toggle:active:not(:disabled)[data-on="true"] .t-toggle-thumb { transform: translateX(var(--toggle-travel)) scaleX(var(--toggle-press-scale)); transform-origin: right center; }
 
 @media (prefers-reduced-motion: reduce) {
-  .t-toggle-thumb { animation: none !important; }
+  .t-toggle, .t-toggle-thumb { transition: none !important; }
 }
 
 /* transitions.dev: 10-success-check.md */
@@ -609,7 +596,7 @@
   grid-template-rows: 0fr;
   transition: grid-template-rows var(--acc-collapse) var(--acc-ease);
 }
-.t-acc[data-open="true"] .t-acc-panel {
+.t-acc[data-open="true"] > .t-acc-panel {
   grid-template-rows: 1fr;
   transition: grid-template-rows var(--acc-expand) var(--acc-ease);
 }
@@ -621,7 +608,7 @@
     opacity var(--acc-collapse) var(--acc-ease),
     filter var(--acc-collapse) var(--acc-ease);
 }
-.t-acc[data-open="true"] .t-acc-panel-inner {
+.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner {
   opacity: 1;
   filter: blur(0);
   transition:

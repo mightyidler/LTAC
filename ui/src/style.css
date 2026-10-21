@@ -1,6 +1,6 @@
 
 @font-face { font-family: Pretendard; src: url('/fonts/pretendard/PretendardVariable.woff2') format('woff2'); font-weight: 45 920; font-display: swap; }
-:root { font-family: Pretendard, sans-serif; color: var(--text-primary); font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased;  --app-width: 375px; --app-height: 500px; --toggle-travel: 24px; --toggle-track: 150ms; --morph-r-closed: 18px; --morph-r-open: 12px; --morph-slide: 8px; --morph-rotate: 0deg; --check-y-amount: 4px; --check-blur-from: 2px; --check-rotate-from: 12deg; }
+:root { font-family: Pretendard, sans-serif; color: var(--text-primary); font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased;  --app-width: 375px; --app-height: 500px; --morph-r-closed: 18px; --morph-r-open: 12px; --morph-slide: 8px; --morph-rotate: 0deg; --check-y-amount: 4px; --check-blur-from: 2px; --check-rotate-from: 12deg; }
 * { box-sizing: border-box; letter-spacing: -0.01em; }
 html, body { margin: 0; background: transparent; }
 body { width: 100%; min-height: 100vh; overflow: hidden; }
@@ -39,6 +39,7 @@ svg { display: block; flex-shrink: 0; }
 #pages > .t-page { background: var(--bg-canvas); border-radius: 0; transition: none; filter: none; transform: none; will-change: auto; }
 /* Inset every page scrollbar by 3px; compensate padding to preserve content alignment. */
 .page-scroll { min-height: 0; overflow-y: auto; overflow-x: hidden; overflow-anchor: none; flex: 1; margin-right: 3px; padding: 60px 12px 16px 15px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
+.app-scrollbar { scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
 .t-page[data-view="choose"] { --choice-footer-height: 68px; --choice-footer-gap: 12px; timeline-scope: --choice-scroll; }
 .choice-scroll { padding: 60px 4px calc(var(--choice-footer-height) + var(--choice-footer-gap)) 7px; scroll-timeline: --choice-scroll block; }
 .choice-scroll .page-heading { padding-inline: 8px; }
@@ -47,13 +48,14 @@ svg { display: block; flex-shrink: 0; }
 .discovery-panel[data-open="true"] { position: relative; }
 #choices-panel[data-open="true"] { transition: none; }
 @supports selector(::-webkit-scrollbar) {
-  .page-scroll { scrollbar-width: auto; scrollbar-color: auto; }
-  .page-scroll::-webkit-scrollbar { width: 4px; background: transparent; }
-  .page-scroll::-webkit-scrollbar-button { display: none; }
+  .page-scroll, .app-scrollbar { scrollbar-width: auto; scrollbar-color: auto; }
+  .page-scroll::-webkit-scrollbar, .app-scrollbar::-webkit-scrollbar { width: 4px; background: transparent; }
+  .page-scroll::-webkit-scrollbar-button, .app-scrollbar::-webkit-scrollbar-button { display: none; }
+  .app-scrollbar::-webkit-scrollbar-track { background: transparent; margin-block: 8px; }
   .page-scroll::-webkit-scrollbar-track { background: transparent; margin-block: 56px var(--scrollbar-bottom-inset); }
   .choice-scroll::-webkit-scrollbar-track { margin-block: 52px var(--scrollbar-bottom-inset); }
-  .page-scroll::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 4px; }
-  .page-scroll::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
+  .page-scroll::-webkit-scrollbar-thumb, .app-scrollbar::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 4px; }
+  .page-scroll::-webkit-scrollbar-thumb:hover, .app-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
   .home-scroll::-webkit-scrollbar-track { margin-block: 52px var(--scrollbar-bottom-inset); }
 }
 .page-heading { margin-bottom: 16px; display: flex; flex-direction: column; gap: 2px; }
@@ -153,19 +155,21 @@ svg { display: block; flex-shrink: 0; }
 .setting-copy small { font-size: 12px; line-height: 16px; color: var(--text-secondary); overflow-wrap: anywhere; }
 .about-section .setting-copy small { color: var(--text-version); }
 .divider { height: 1px; background: var(--surface-subtle); }
-.t-toggle { width: 64px; height: 28px; flex: 0 0 64px; border-radius: 16px; padding: 2px; background: var(--toggle-off); text-align: left; }
+.t-toggle { display: flex; align-items: center; justify-content: flex-start; width: 64px; height: 28px; flex: 0 0 64px; border-radius: 16px; padding: 2px; background: var(--toggle-off); text-align: left; }
+.t-toggle:hover:not(:disabled) { background: var(--toggle-off); }
+.t-toggle:active:not(:disabled) { scale: 1; }
 .t-toggle[data-on="true"], .t-toggle[data-on="true"]:hover { background: var(--toggle-on); }
-.t-toggle-thumb { display: block; width: 36px; height: 24px; border-radius: 14px; background: var(--toggle-thumb); box-shadow: 0 1px 3px var(--shadow-raised); }
+.t-toggle-thumb { display: block; flex-shrink: 0; width: 36px; height: 24px; border-radius: 14px; background: var(--toggle-thumb); box-shadow: 0 1px 3px var(--shadow-raised); }
 .shortcut-group { padding: 16px 0; display: flex; flex-direction: column; gap: 0; }
 .shortcut-group .setting-row { padding: 0; }
 .shortcut-panel { --acc-expand: 350ms; --acc-collapse: 250ms; }
-.shortcut-panel .t-acc-panel { transition-delay: var(--duration-micro); }
-.shortcut-panel[data-open="true"] .t-acc-panel { transition-delay: 0ms; }
-.shortcut-panel.t-acc .t-acc-panel-inner { min-height: 0; opacity: 0; filter: blur(4px); transition: opacity var(--duration-quick) var(--ease-in-out), filter var(--duration-quick) var(--ease-in-out); }
-.shortcut-panel.t-acc[data-open="true"] .t-acc-panel-inner { opacity: 1; filter: blur(0); transition: opacity var(--duration-fast) var(--ease-in-out) var(--duration-stagger), filter var(--duration-fast) var(--ease-in-out) var(--duration-stagger); }
+.shortcut-panel > .t-acc-panel { transition-delay: var(--duration-micro); }
+.shortcut-panel[data-open="true"] > .t-acc-panel { transition-delay: 0ms; }
+.shortcut-panel.t-acc > .t-acc-panel > .t-acc-panel-inner { min-height: 0; opacity: 0; filter: blur(4px); transition: opacity var(--duration-quick) var(--ease-in-out), filter var(--duration-quick) var(--ease-in-out); }
+.shortcut-panel.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1; filter: blur(0); transition: opacity var(--duration-fast) var(--ease-in-out) var(--duration-stagger), filter var(--duration-fast) var(--ease-in-out) var(--duration-stagger); }
 .shortcut-setting { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 16px 0 8px; transform: translateY(-4px); transition: transform var(--duration-quick) var(--ease-smooth-out); }
 .shortcut-setting > p { flex: 0 0 auto; }
-.shortcut-panel[data-open="true"] .shortcut-setting { transform: translateY(0); transition: transform var(--duration-fast) var(--ease-smooth-out) var(--duration-stagger); }
+.shortcut-panel[data-open="true"] > .t-acc-panel > .t-acc-panel-inner > .shortcut-setting { transform: translateY(0); transition: transform var(--duration-fast) var(--ease-smooth-out) var(--duration-stagger); }
 .shortcut-button { --shortcut-copy-out-dur: 350ms; --shortcut-overlap-delay: 120ms; position: relative; grid-template-columns: minmax(0, 1fr); --text-swap-dur: var(--duration-fast); --shortcut-surface-dur: var(--duration-medium); --text-swap-translate-y: var(--distance-micro); --text-swap-blur: var(--blur-small); --text-swap-ease: var(--ease-in-out); display: grid; place-items: center; flex: 0 1 auto; min-width: 0; max-width: 220px; min-height: 28px; padding: 5px 9px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--border-subtle); background: var(--shortcut-bg); color: var(--text-control); font-size: 13px; line-height: 18px; overflow: visible; transition: width var(--shortcut-surface-dur) var(--ease-smooth-out) var(--shortcut-resize-delay, 0ms), height var(--shortcut-surface-dur) var(--ease-smooth-out) var(--shortcut-resize-delay, 0ms), background-color var(--shortcut-surface-dur) var(--ease-smooth-out), box-shadow var(--shortcut-surface-dur) var(--ease-smooth-out), color var(--shortcut-surface-dur) var(--ease-smooth-out), scale var(--duration-quick) var(--ease-smooth-out); }
 .shortcut-button > span { grid-area: 1 / 1; display: block; max-width: 100%; white-space: pre; overflow-wrap: anywhere; }
 .shortcut-button > .shortcut-copy-outgoing { grid-area: auto; position: absolute; left: 50%; top: 50%; translate: -50% -50%; pointer-events: none; }

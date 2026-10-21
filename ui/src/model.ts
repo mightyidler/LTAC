@@ -4,5 +4,6 @@ export type Snapshot = {
   configured: boolean; name: string; stage: string; choices: Choice[];
   devices: Device[]; automatic: boolean; keep_tv_on: boolean; shortcut_enabled: boolean; shortcut: string | null;
   busy: boolean; error: string | null;
+  screen_enabled: boolean; screen_timeout_seconds: number; screen_shortcut_enabled: boolean; screen_shortcut: string | null;
 };
-export const initialState: Snapshot = { configured: false, name: '', stage: 'searching', choices: [], devices: [], automatic: true, keep_tv_on: false, shortcut_enabled: false, shortcut: null, busy: false, error: null };
+export const initialState: Snapshot = { configured: false, name: '', stage: 'searching', choices: [], devices: [], automatic: true, keep_tv_on: false, shortcut_enabled: false, shortcut: null, busy: false, error: null, screen_enabled: false, screen_timeout_seconds: 90, screen_shortcut_enabled: false, screen_shortcut: null };

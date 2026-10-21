@@ -12,6 +12,8 @@ use tokio_tungstenite::{
 
 pub const POWER_STATE: &str = "ssap://com.webos.service.tvpower/power/getPowerState";
 pub const POWER_OFF: &str = "ssap://system/turnOff";
+pub const SCREEN_OFF: &str = "ssap://com.webos.service.tvpower/power/turnOffScreen";
+pub const SCREEN_ON: &str = "ssap://com.webos.service.tvpower/power/turnOnScreen";
 pub const FOREGROUND_APP: &str = "ssap://com.webos.applicationManager/getForegroundAppInfo";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -179,7 +181,7 @@ impl Session {
             }
             let mut payload = json!({"forcePairing":false, "pairingType":"PROMPT", "manifest":{
                 "manifestVersion":1, "appVersion":env!("CARGO_PKG_VERSION"),
-                "permissions":["CONTROL_POWER", "READ_POWER_STATE", "READ_NETWORK_STATE", "READ_RUNNING_APPS"]
+                "permissions":["CONTROL_POWER", "CONTROL_DISPLAY", "CONTROL_TV_SCREEN", "READ_POWER_STATE", "READ_NETWORK_STATE", "READ_RUNNING_APPS"]
             }});
             if let Some(key) = key { payload["client-key"] = key.into(); }
             self.send(json!({"type":"register", "id":"register", "payload":payload})).await?;
@@ -257,6 +259,17 @@ impl Session {
     }
     pub async fn power_state(&mut self) -> Result<PowerState> {
         Ok(PowerState::from_payload(&self.request(POWER_STATE).await?))
+    }
+    pub async fn set_screen(&mut self, on: bool) -> Result<()> {
+        let payload = self
+            .request(if on { SCREEN_ON } else { SCREEN_OFF })
+            .await?;
+        if payload["returnValue"] != true {
+            return Err(Error::Protocol(
+                "Panel response did not acknowledge returnValue=true",
+            ));
+        }
+        Ok(())
     }
     pub async fn foreground_app(&mut self) -> Result<String> {
         let payload = self.request(FOREGROUND_APP).await?;
@@ -529,6 +542,48 @@ pub(crate) mod tests {
             "saved-key"
         );
         remote.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fresh_and_saved_key_registration_grant_panel_control_on_the_same_socket() {
+        for key in [None, Some("saved-key")] {
+            let (mut client, mut server) = peer().await;
+            let remote = tokio::spawn(async move {
+                handshake_prefix(&mut server).await;
+                let register = receive(&mut server).await;
+                let permissions = register["payload"]["manifest"]["permissions"]
+                    .as_array()
+                    .unwrap();
+                let panel_granted = ["CONTROL_DISPLAY", "CONTROL_TV_SCREEN"]
+                    .iter()
+                    .all(|required| permissions.iter().any(|p| p == required));
+                send(&mut server, json!({"id":"register","type":"registered","payload":{"client-key":"test-key"}})).await;
+                let off = receive(&mut server).await;
+                assert_eq!(off["uri"], SCREEN_OFF);
+                assert_eq!(off["payload"], json!({}));
+                // A real TV can accept registration while denying a capability
+                // omitted from its manifest. Earlier mocks missed this boundary.
+                send(&mut server, if panel_granted {
+                    json!({"id":off["id"],"type":"response","payload":{"returnValue":true}})
+                } else {
+                    json!({"id":off["id"],"type":"error","error":"401 insufficient permissions"})
+                }).await;
+                if panel_granted {
+                    let on = receive(&mut server).await;
+                    assert_eq!(on["uri"], SCREEN_ON);
+                    assert_eq!(on["payload"], json!({}));
+                    send(
+                        &mut server,
+                        json!({"id":on["id"],"type":"response","payload":{"returnValue":true}}),
+                    )
+                    .await;
+                }
+            });
+            client.register(key, key.is_none()).await.unwrap();
+            client.set_screen(false).await.unwrap();
+            client.set_screen(true).await.unwrap();
+            remote.await.unwrap();
+        }
     }
 
     #[tokio::test]

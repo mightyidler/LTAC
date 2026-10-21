@@ -79,9 +79,20 @@ pub enum Request {
     On,
     Off,
     Sleep,
-    Automatic { enabled: bool },
-    KeepTvOn { enabled: bool },
-    Configure { devices: Vec<crate::config::Config> },
+    ScreenProtection {
+        signal: crate::screen_protection::Signal,
+        sequence: u64,
+        source: u64,
+    },
+    Automatic {
+        enabled: bool,
+    },
+    KeepTvOn {
+        enabled: bool,
+    },
+    Configure {
+        devices: Vec<crate::config::Config>,
+    },
 }
 
 pub async fn subscribe(mut observe: impl FnMut(Snapshot)) -> Result<()> {

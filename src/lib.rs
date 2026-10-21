@@ -5,6 +5,7 @@ pub mod discovery;
 pub mod hdmi;
 pub mod journal;
 pub mod lifecycle;
+pub mod screen_protection;
 #[cfg(windows)]
 pub mod service;
 #[cfg(windows)]

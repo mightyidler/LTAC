@@ -24,6 +24,8 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt;
 use tokio::sync::Mutex;
 
+#[path = "screen.rs"]
+mod screen;
 #[path = "ui_commands.rs"]
 mod ui;
 
@@ -47,6 +49,10 @@ pub struct Snapshot {
     devices: Vec<ui::SavedDevice>,
     shortcut_enabled: bool,
     shortcut: Option<String>,
+    screen_enabled: bool,
+    screen_timeout_seconds: u32,
+    screen_shortcut_enabled: bool,
+    screen_shortcut: Option<String>,
 }
 #[derive(Clone, Serialize)]
 struct Choice {
@@ -61,6 +67,10 @@ struct Preferences {
     keep_tv_on: bool,
     shortcut_enabled: bool,
     shortcut: Option<String>,
+    screen_enabled: bool,
+    screen_timeout_seconds: u32,
+    screen_shortcut_enabled: bool,
+    screen_shortcut: Option<String>,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -69,6 +79,24 @@ impl Default for Preferences {
             keep_tv_on: false,
             shortcut_enabled: false,
             shortcut: None,
+            screen_enabled: false,
+            screen_timeout_seconds: ltac::screen_protection::DEFAULT_SECONDS,
+            screen_shortcut_enabled: false,
+            screen_shortcut: None,
+        }
+    }
+}
+impl From<&Snapshot> for Preferences {
+    fn from(s: &Snapshot) -> Self {
+        Self {
+            automatic: s.automatic,
+            keep_tv_on: s.keep_tv_on,
+            shortcut_enabled: s.shortcut_enabled,
+            shortcut: s.shortcut.clone(),
+            screen_enabled: s.screen_enabled,
+            screen_timeout_seconds: s.screen_timeout_seconds,
+            screen_shortcut_enabled: s.screen_shortcut_enabled,
+            screen_shortcut: s.screen_shortcut.clone(),
         }
     }
 }
@@ -86,6 +114,14 @@ pub struct Desktop {
     pair_cancel: tokio::sync::Notify,
     discovery_cancel: tokio::sync::Notify,
     hotkey: ui::Hotkey,
+    screen_hotkey: ui::Hotkey,
+    screen_toggle: tokio::sync::mpsc::Sender<()>,
+    screen_changed: tokio::sync::Notify,
+    screen_epoch: std::sync::atomic::AtomicU64,
+    screen_sequence: std::sync::atomic::AtomicU64,
+    screen_source: u64,
+    screen_allowed: std::sync::atomic::AtomicBool,
+    screen_session: std::sync::Mutex<ltac::screen_protection::SessionPolicy>,
     shortcut_sleep: std::sync::atomic::AtomicBool,
     _lock: File,
 }
@@ -207,6 +243,16 @@ fn initial_view(
         devices,
         shortcut_enabled: preferences.shortcut_enabled,
         shortcut: preferences.shortcut.clone(),
+        screen_enabled: preferences.screen_enabled,
+        screen_timeout_seconds: if ltac::screen_protection::valid_seconds(
+            preferences.screen_timeout_seconds,
+        ) {
+            preferences.screen_timeout_seconds
+        } else {
+            ltac::screen_protection::DEFAULT_SECONDS
+        },
+        screen_shortcut_enabled: preferences.screen_shortcut_enabled,
+        screen_shortcut: preferences.screen_shortcut.clone(),
     };
     if let Some(config) = saved.first().or(legacy.as_ref()) {
         apply_config(&mut initial, config);
@@ -274,6 +320,9 @@ fn observe(view: &RwLock<Snapshot>, app: &tauri::AppHandle, event: &str, data: &
 }
 
 async fn stop_watcher(state: &Desktop) {
+    state
+        .screen_epoch
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     if let Ok(mut route) = state.events.write() {
         route.watcher = None;
     }
@@ -325,12 +374,13 @@ async fn start_watcher(
     );
     anyhow::ensure!(!ltac::lifecycle::is_ending(), "Windows session is ending");
     let keep_tv_on = read(state).map_err(anyhow::Error::msg)?.keep_tv_on;
+    let power_automatic = read(state).map_err(anyhow::Error::msg)?.automatic;
     let configs = ui::configs(&state.path)?;
     anyhow::ensure!(!configs.is_empty(), "연결된 기기가 없어요.");
     for config in &configs {
         config.key()?;
         anyhow::ensure!(
-            config.mac.is_some(),
+            !power_automatic || config.mac.is_some(),
             "기기 정보에서 MAC 주소를 확인해주세요."
         );
     }
@@ -364,13 +414,14 @@ async fn start_watcher(
             let mut journal = journal.clone();
             let initial = next_initial(&mut initial);
             tasks.spawn(async move {
-                ltac::sync::run_with_policy(
+                ltac::sync::run_with_screen_policy(
                     &config,
                     &mut journal,
                     receiver,
                     false,
                     initial,
                     keep_tv_on,
+                    power_automatic,
                 )
                 .await
             });
@@ -416,6 +467,7 @@ async fn start_watcher(
         }
     });
     *state.watcher.lock().await = Some(task);
+    state.screen_changed.notify_one();
     Ok(())
 }
 
@@ -518,7 +570,10 @@ async fn do_automatic(
         return read(state);
     }
     stop_watcher(state).await;
-    if enabled && let Err(error) = start_watcher(state, app, None).await {
+    update(&state.view, app, |s| s.automatic = enabled);
+    if (enabled || read(state)?.screen_enabled)
+        && let Err(error) = start_watcher(state, app, None).await
+    {
         fail(state, app, &format!("자동 동기화: {error:#}"));
         update(&state.view, app, |s| s.automatic = false);
         let _ = save_preferences(&state.path, false);
@@ -793,7 +848,8 @@ async fn resume_automatic(state: &Desktop, app: &tauri::AppHandle, enabled: bool
         return;
     }
     let configured = read(state).is_ok_and(|s| s.configured);
-    if enabled
+    update(&state.view, app, |s| s.automatic = enabled);
+    if (enabled || read(state).is_ok_and(|s| s.screen_enabled))
         && configured
         && let Err(error) = start_watcher(state, app, None).await
     {
@@ -930,7 +986,18 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     let source = Some(tauri::async_runtime::block_on(
         ltac::windows_events::Source::start(native_sender, true),
     )?);
-    let hotkey = ui::Hotkey::start(app.handle().clone());
+    let hotkey = ui::Hotkey::start(app.handle().clone(), false);
+    let screen_hotkey = ui::Hotkey::start(app.handle().clone(), true);
+    if preferences.screen_enabled
+        && preferences.screen_shortcut_enabled
+        && let Err(error) = screen_hotkey.set(preferences.screen_shortcut.clone())
+    {
+        update(&view, app.handle(), |s| {
+            s.screen_shortcut_enabled = false;
+            s.error = Some(error);
+        });
+    }
+    let (screen_toggle, screen_toggles) = tokio::sync::mpsc::channel(4);
     if preferences.shortcut_enabled
         && let Err(error) = hotkey.set(preferences.shortcut.clone())
     {
@@ -952,9 +1019,18 @@ fn setup(app: &mut tauri::App) -> Result<()> {
         pair_cancel: tokio::sync::Notify::new(),
         discovery_cancel: tokio::sync::Notify::new(),
         hotkey,
+        screen_hotkey,
+        screen_toggle,
+        screen_changed: tokio::sync::Notify::new(),
+        screen_epoch: std::sync::atomic::AtomicU64::new(0),
+        screen_sequence: std::sync::atomic::AtomicU64::new(1),
+        screen_source: now().saturating_mul(1_000_000) + u64::from(std::process::id()),
+        screen_allowed: std::sync::atomic::AtomicBool::new(true),
+        screen_session: std::sync::Mutex::new(Default::default()),
         shortcut_sleep: std::sync::atomic::AtomicBool::new(false),
         _lock: lock,
     });
+    screen::start(app.handle().clone(), screen_toggles);
 
     if service_mode {
         let handle = app.handle().clone();
@@ -1016,6 +1092,7 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     tauri::async_runtime::spawn(async move {
         while let Some(notice) = native_events.recv().await {
             let state = handle.state::<Desktop>();
+            screen::native_event(&state, notice.event);
             if notice.event == Event::DisplayTopologyChanged {
                 topology_sender.send_modify(|generation| *generation = generation.wrapping_add(1));
             }
@@ -1107,7 +1184,7 @@ fn setup(app: &mut tauri::App) -> Result<()> {
             resume_automatic(&state, &handle, preferences.automatic).await;
             return;
         }
-        if read(&state).is_ok_and(|s| s.automatic)
+        if read(&state).is_ok_and(|s| s.automatic || s.screen_enabled)
             && let Err(error) = start_watcher(&state, &handle, None).await
         {
             let _ = save_preferences(&state.path, false);
@@ -1292,6 +1369,7 @@ pub fn run() -> Result<()> {
             ui::set_device_hdmi,
             ui::remove_device,
             ui::set_shortcut,
+            screen::set_screen_protection,
             ui::set_keep_tv_on,
             crate::updater::update_status,
             crate::updater::check_for_updates_manual
@@ -1356,6 +1434,7 @@ mod startup_tests {
                     keep_tv_on: view.keep_tv_on,
                     shortcut_enabled: true,
                     shortcut: Some("F8".into()),
+                    ..Default::default()
                 },
             )
             .unwrap();

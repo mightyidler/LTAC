@@ -348,7 +348,7 @@ pub(super) struct Hotkey {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 impl Hotkey {
-    pub(super) fn start(app: tauri::AppHandle) -> Self {
+    pub(super) fn start(app: tauri::AppHandle, screen: bool) -> Self {
         let (sender, receiver) = mpsc::sync_channel::<HotkeyRequest>(1);
         let (ready, started) = mpsc::sync_channel(1);
         let thread = std::thread::spawn(move || {
@@ -410,6 +410,11 @@ impl Hotkey {
                     let _ = reply.send(result);
                 }
                 if message.message == WM_HOTKEY && active {
+                    if screen {
+                        let state = app.state::<Desktop>();
+                        let _ = state.screen_toggle.try_send(());
+                        continue;
+                    }
                     let app = app.clone();
                     tauri::async_runtime::spawn(async move {
                         let state = app.state::<Desktop>();
@@ -471,7 +476,7 @@ impl Drop for Hotkey {
         }
     }
 }
-fn parse_shortcut(shortcut: &str) -> std::result::Result<(u32, u32), String> {
+pub(super) fn parse_shortcut(shortcut: &str) -> std::result::Result<(u32, u32), String> {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN,
     };
@@ -597,6 +602,7 @@ async fn sleep_all(state: &Desktop, app: &tauri::AppHandle) -> Result<()> {
     }
     // Fail before touching the TV if Windows cannot grant sleep permission.
     tokio::task::spawn_blocking(|| with_sleep_privilege(|| Ok(()))).await??;
+    super::screen::native_event(state, Event::Suspend);
     state
         .shortcut_sleep
         .store(true, std::sync::atomic::Ordering::Release);
@@ -690,6 +696,7 @@ async fn sleep_with_recovery(
 }
 
 pub(super) async fn restore_after_sleep(state: &Desktop, app: &tauri::AppHandle) -> Result<()> {
+    super::screen::native_event(state, Event::ResumeInteractive);
     if state.service_mode {
         let remote = ltac::service_ipc::request(ltac::service_ipc::Request::On).await?;
         apply_service(state, app, remote);
@@ -711,7 +718,10 @@ pub(super) async fn restore_after_sleep(state: &Desktop, app: &tauri::AppHandle)
             Ok(())
         }
         .await;
-        if read(state).map_err(anyhow::Error::msg)?.automatic {
+        if read(state)
+            .map_err(anyhow::Error::msg)
+            .is_ok_and(|s| s.automatic || s.screen_enabled)
+        {
             start_watcher(state, app, None).await?;
         }
         result?;
@@ -878,6 +888,7 @@ pub(super) async fn set_keep_tv_on(
         keep_tv_on: enabled,
         shortcut_enabled: previous.shortcut_enabled,
         shortcut: previous.shortcut.clone(),
+        ..Preferences::from(&previous)
     };
     if let Err(error) = write_preferences(&state.path, &prefs) {
         if state.service_mode {
@@ -906,8 +917,9 @@ pub(super) async fn set_keep_tv_on(
                 .map_err(|e| e.to_string())?;
         }
     }
-    if !state.service_mode && previous.automatic && previous.configured {
-        resume_automatic(&state, &app, true).await;
+    if !state.service_mode && (previous.automatic || previous.screen_enabled) && previous.configured
+    {
+        resume_automatic(&state, &app, previous.automatic).await;
     }
     read(&state)
 }
@@ -924,6 +936,11 @@ pub(super) async fn set_shortcut(
         .try_lock()
         .map_err(|_| "다른 작업을 처리 중입니다.")?;
     let previous = read(&state)?;
+    if let (Some(a), Some(b)) = (&shortcut, &previous.screen_shortcut)
+        && parse_shortcut(a)? == parse_shortcut(b)?
+    {
+        return Err("이미 다른 LTAC 단축키에 지정된 조합입니다.".into());
+    }
     let active = if enabled { shortcut.clone() } else { None };
     state.hotkey.set(active)?;
     let result: Result<()> = (|| {
@@ -933,6 +950,7 @@ pub(super) async fn set_shortcut(
             keep_tv_on: previous.keep_tv_on,
             shortcut_enabled: enabled,
             shortcut: shortcut.clone(),
+            ..Preferences::from(&previous)
         };
         let mut file =
             tempfile::NamedTempFile::new_in(path.parent().context("Missing settings directory")?)?;

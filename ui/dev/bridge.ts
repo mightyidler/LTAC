@@ -44,6 +44,7 @@ export async function command(name: string, args: Record<string, unknown> = {}):
   else if (name === 'set_keep_tv_on') preview.keep_tv_on = Boolean(args.enabled);
   else if (name === 'set_device_hdmi') preview.devices = preview.devices.map(d => d.id === args.id ? { ...d, pc_hdmi: Number(args.pcHdmi) } : d);
   else if (name === 'set_shortcut') { preview.shortcut_enabled = Boolean(args.enabled); preview.shortcut = args.shortcut ? String(args.shortcut) : null; }
+  else if (name === 'set_screen_protection') { preview.screen_enabled = Boolean(args.enabled); preview.screen_timeout_seconds = Number(args.timeoutSeconds); preview.screen_shortcut_enabled = Boolean(args.shortcutEnabled); preview.screen_shortcut = args.shortcut ? String(args.shortcut) : null; }
   else if (name === 'edit_device') preview.devices = preview.devices.map(d => d.id === args.id ? { ...d, ip: String(args.ip), mac: args.mac ? String(args.mac) : null } : d);
   else if (name === 'remove_device') { preview.devices = preview.devices.filter(d => d.id !== args.id); preview.configured = preview.devices.length > 0; preview.stage = 'ready'; }
   else if (name === 'cancel_connection') preview.stage = preview.configured ? 'ready' : 'choose';

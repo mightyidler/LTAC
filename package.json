@@ -18,7 +18,7 @@
     "desktop:release": "npm run core:release && tauri build --bundles nsis",
     "core:release": "cargo build --release --locked --bins",
     "test": "node tools/check-ui-inputs.mjs && node tools/check-app-update.mjs && node tools/check-page-motion.mjs && node tools/check-motion-time.mjs && node tools/check-shortcut-motion.mjs && node tools/check-localization.mjs && node tools/check-indicator-bounds.mjs && node --test tests/*.test.mjs",
-    "test:browser": "node tools/check-connection-flow.mjs && node tools/check-hdmi-menu.mjs && node tools/check-input-protection.mjs && node tools/check-window-surface.mjs && node tools/check-icon-motion.mjs && node tools/check-status-material.mjs",
+    "test:browser": "node tools/check-connection-flow.mjs && node tools/check-hdmi-menu.mjs && node tools/check-input-protection.mjs && node tools/check-window-surface.mjs && node tools/check-icon-motion.mjs && node tools/check-status-material.mjs && node tools/check-screen-protection.mjs",
     "test:appearance": "node tools/check-theme-language.mjs"
   },
   "dependencies": {

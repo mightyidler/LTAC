@@ -157,7 +157,7 @@ try {
       assert.deepEqual(await backgrounds(), ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)'], 'Leaving the action clears its highlight');
     }
     const expanded = await page.locator('.device-menu:not(.hdmi-menu)').boundingBox();
-    assert.ok(Math.abs(expanded.width - 140) < .05 && Math.abs(expanded.height - 76) < .05);
+    assert.ok(Math.abs(expanded.width - 140) < .05 && Math.abs(expanded.height - 84) < .05);
     const menuStyle = await page.locator('.device-menu:not(.hdmi-menu)').evaluate(node => {
       const panel = getComputedStyle(node), content = getComputedStyle(node.querySelector('.t-morph-menu'));
       return { radius:panel.borderRadius, blur:panel.backdropFilter, padding:content.padding, rowGap:content.gap, rows:[...node.querySelectorAll('[role=menuitem]')].map(item => {
@@ -165,7 +165,7 @@ try {
         return { radius:style.borderRadius, weight:style.fontWeight, gap:style.gap, paddingY:style.paddingTop, height:box.height, iconInset:icon.x - box.x, textGap:text.x - icon.right };
       }) };
     });
-    assert.equal(menuStyle.radius, '20px'); assert.equal(menuStyle.blur, 'blur(24px)'); assert.equal(menuStyle.padding, '4px'); assert.equal(menuStyle.rowGap, '4px');
+    assert.equal(menuStyle.radius, '24px'); assert.equal(menuStyle.blur, 'blur(24px)'); assert.equal(menuStyle.padding, '8px'); assert.equal(menuStyle.rowGap, '4px');
     for (const row of menuStyle.rows) { assert.equal(row.radius, '16px'); assert.equal(row.weight, '400'); assert.equal(row.gap, '8px'); assert.equal(row.paddingY, '8px'); assert.equal(row.height, 32); assert.ok(Math.abs(row.iconInset - 8) < .05); assert.ok(Math.abs(row.textGap - 8) < .05); }
     const itemPress = await press('.device-menu:not(.hdmi-menu) [data-action="edit"]');
     assert.equal((await backgrounds())[0], 'rgba(255, 255, 255, 0.04)', 'Pressed action is highlighted');

@@ -42,8 +42,24 @@ test('release command rolls back failed validation and atomically publishes matc
     assert.equal(git('status', '--porcelain'), '', 'Validation failure restores exact original files');
     assert.equal(git('rev-parse', 'HEAD'), originalHead);
     assert.equal(git('tag', '--list'), '', 'Validation failure creates no tag');
+    // Reproduce the original fetch-first cause: a remote bot commit and a local
+    // feature commit made since the previous release must both survive.
+    const remoteWork = join(directory, 'remote-work');
+    execFileSync('git', ['clone', '-b', 'main', join(directory, 'remote.git'), remoteWork], { stdio: 'pipe' });
+    const remoteGit = (...args) => execFileSync('git', args, { cwd: remoteWork, stdio: 'pipe' });
+    remoteGit('config', 'user.name', 'Remote test');
+    remoteGit('config', 'user.email', 'remote@example.invalid');
+    writeFileSync(join(remoteWork, 'update.json'), '{"version":"0.1.6"}\n');
+    remoteGit('add', 'update.json');
+    remoteGit('commit', '-m', 'remote manifest');
+    remoteGit('push', 'origin', 'main');
+    write('feature.txt', 'local feature\n');
+    git('add', 'feature.txt');
+    git('commit', '-m', 'local feature');
     const result = invoke({ FAIL_VALIDATION: '' });
     assert.equal(result.status, 0, result.stderr);
+    assert.equal(read('feature.txt').trim(), 'local feature');
+    assert.equal(JSON.parse(read('update.json')).version, '0.1.6');
     for (const path of ['package.json', 'package-lock.json', 'src-tauri/tauri.conf.json']) assert.equal(JSON.parse(read(path)).version, '0.1.7');
     assert.equal(JSON.parse(read('package-lock.json')).packages[''].version, '0.1.7');
     assert.equal(JSON.parse(read('package-lock.json')).packages.dependency.version, '0.1.6');

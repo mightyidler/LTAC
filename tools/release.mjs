@@ -17,7 +17,9 @@ if (difference < 0 || parts[difference] < old[difference]) throw new Error('Choo
 if (git('branch', '--show-current') !== 'main') throw new Error('Release from main.');
 if (git('status', '--porcelain')) throw new Error('Commit your changes before running the release command.');
 run('git', ['fetch', 'origin', '--tags']);
-run('git', ['merge', '--ff-only', 'origin/main']);
+// Integrate remote automation commits before changing version files. Local-only
+// commits are replayed on the updated main; conflicts stop before a tag exists.
+run('git', ['rebase', 'origin/main']);
 if (git('tag', '--list', `v${version}`)) throw new Error(`v${version} already exists; choose a new version.`);
 // Re-read after fast-forwarding; the remote may already contain a newer release.
 if (JSON.parse(read('package.json')).version !== current) throw new Error('Remote version changed. Run the command again with the next version.');

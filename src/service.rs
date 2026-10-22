@@ -4,7 +4,7 @@ use crate::{
     config::Config,
     controller,
     journal::Journal,
-    service_ipc::{self as ipc, Request, Response, Snapshot},
+    service_ipc::{self as ipc, Request, Response, ShutdownPhase, Snapshot},
     ssap::{PowerState, Session},
     sync::{Event, Notice, State, Target},
 };
@@ -17,7 +17,7 @@ use std::{
     ptr::{null, null_mut},
     sync::{
         Arc, OnceLock, RwLock,
-        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -51,10 +51,20 @@ static BRIDGE: OnceLock<Bridge> = OnceLock::new();
 static INITIAL_DISPLAY: AtomicBool = AtomicBool::new(true);
 static CONSOLE_DISPLAY: AtomicU32 = AtomicU32::new(u32::MAX);
 static SNAPSHOT_CHANGED: tokio::sync::Notify = tokio::sync::Notify::const_new();
+static CHECKPOINT: AtomicU32 = AtomicU32::new(0);
+static STOP_RECEIVED_AT: AtomicU64 = AtomicU64::new(0);
+
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(4);
+// A lost cancellation relay must not indefinitely disable ordinary power sync.
+const SHUTDOWN_QUERY_LEASE: Duration = Duration::from_secs(60);
+// Existing installation reserves 6 s for preshutdown. Leave time for cleanup.
+const PROTECTED_SHUTDOWN_BUDGET: Duration = Duration::from_millis(5600);
+static STOP_STARTED: OnceLock<Instant> = OnceLock::new();
 
 struct Bridge {
     events: crate::sync::NoticeSender,
     stop: watch::Sender<u32>,
+    shutdown: watch::Sender<ShutdownPhase>,
 }
 #[derive(Serialize, Deserialize)]
 pub struct Settings {
@@ -79,6 +89,7 @@ struct Work {
     check_input: bool,
     urgent: bool,
     delay: Duration,
+    shutdown: bool,
     reply: Option<oneshot::Sender<Response>>,
 }
 
@@ -196,6 +207,9 @@ impl Fleet {
                     device.off_attempted.store(false, Ordering::Release);
                 }
                 if matches!(work.kind, Kind::Off) && device.off_attempted.load(Ordering::Acquire) {
+                    if work.shutdown {
+                        let _ = journal.record("shutdown_device_skipped", json!({"ip":device.config.ip,"reason":"previous_off_may_have_been_sent"}));
+                    }
                     return Ok("off_requested".to_owned());
                 }
                 let result = perform(
@@ -208,6 +222,9 @@ impl Fleet {
                     work.check_input && initial.keep_tv_on,
                 )
                 .await;
+                if work.shutdown {
+                    let _ = journal.record("shutdown_device_finished", json!({"ip":device.config.ip,"completed":result.is_ok(),"error":result.as_ref().err().map(|e| format!("{e:#}")),"off_may_have_been_sent":device.off_attempted.load(Ordering::Acquire),"physical_state":"not_observed"}));
+                }
                 if result.is_err() {
                     device.session = None;
                 }
@@ -295,6 +312,7 @@ impl Work {
             },
             urgent,
             delay: Duration::ZERO,
+            shutdown: false,
             reply: None,
         }
     }
@@ -340,12 +358,12 @@ fn status(state: u32, error: u32) {
             dwWin32ExitCode: error,
             dwServiceSpecificExitCode: 0,
             dwCheckPoint: if state == SERVICE_START_PENDING || state == SERVICE_STOP_PENDING {
-                1
+                CHECKPOINT.fetch_add(1, Ordering::AcqRel) + 1
             } else {
                 0
             },
             dwWaitHint: if state == SERVICE_STOP_PENDING {
-                5000
+                6000
             } else if state == SERVICE_START_PENDING {
                 10000
             } else {
@@ -402,6 +420,8 @@ unsafe extern "system" fn control(
             // OFF into an ordinary service stop that would skip the command.
             bridge.stop.send_if_modified(|reason| {
                 if *reason == 0 {
+                    STOP_RECEIVED_AT.store(timestamp(), Ordering::Release);
+                    let _ = STOP_STARTED.set(Instant::now());
                     *reason = code;
                     true
                 } else {
@@ -545,6 +565,7 @@ async fn serve(
     owner_sid: String,
     sender: mpsc::Sender<Envelope>,
     view: Arc<RwLock<Snapshot>>,
+    shutdown: watch::Sender<ShutdownPhase>,
 ) -> Result<()> {
     let slots = Arc::new(tokio::sync::Semaphore::new(16));
     loop {
@@ -556,6 +577,7 @@ async fn serve(
         };
         let sender = sender.clone();
         let view = view.clone();
+        let shutdown = shutdown.clone();
         tokio::spawn(async move {
             let _permit = permit;
             let _ = async {
@@ -564,6 +586,15 @@ async fn serve(
                 timeout(Duration::from_secs(2), (&mut reader).take(ipc::MAX_FRAME).read_line(&mut line)).await??;
                 anyhow::ensure!(line.ends_with('\n'), "Incomplete IPC frame");
                 let request: Request = serde_json::from_str(&line)?;
+                // Intent bypasses the command queue so an in-flight input query
+                // is gated before the native window returns to Windows.
+                if let Request::Shutdown { phase } = request {
+                    publish_shutdown(&shutdown, phase);
+                    let response = Response { snapshot: snapshot(&view)?, error: None };
+                    let mut bytes = serde_json::to_vec(&response)?; bytes.push(b'\n');
+                    timeout(Duration::from_secs(2), reader.get_mut().write_all(&bytes)).await??;
+                    return Ok(());
+                }
                 if matches!(request, Request::Subscribe) {
                     loop {
                         let notified = SNAPSHOT_CHANGED.notified();
@@ -589,6 +620,55 @@ async fn serve(
             }.await;
         });
     }
+}
+
+fn publish_shutdown(sender: &watch::Sender<ShutdownPhase>, phase: ShutdownPhase) {
+    sender.send_if_modified(|current| {
+        if *current == ShutdownPhase::Confirm || *current == phase {
+            return false;
+        }
+        *current = phase;
+        true
+    });
+}
+
+struct QueryLease {
+    deadline: tokio::time::Instant,
+    expired: bool,
+}
+impl Default for QueryLease {
+    fn default() -> Self {
+        Self {
+            deadline: tokio::time::Instant::now(),
+            expired: false,
+        }
+    }
+}
+impl QueryLease {
+    /// Only an explicit cancellation replays the deferred desired target.
+    fn observe(&mut self, phase: ShutdownPhase) -> bool {
+        if phase == ShutdownPhase::Query {
+            self.deadline = tokio::time::Instant::now() + SHUTDOWN_QUERY_LEASE;
+            self.expired = false;
+        }
+        phase == ShutdownPhase::Cancel && !std::mem::take(&mut self.expired)
+    }
+    fn expire(&mut self, sender: &watch::Sender<ShutdownPhase>) -> bool {
+        self.expired = sender.send_if_modified(|phase| {
+            if *phase != ShutdownPhase::Query {
+                return false;
+            }
+            *phase = ShutdownPhase::Cancel;
+            true
+        });
+        self.expired
+    }
+}
+
+fn protected_shutdown_pending() -> bool {
+    BRIDGE.get().is_some_and(|bridge| {
+        *bridge.shutdown.borrow() != ShutdownPhase::Cancel || *bridge.stop.borrow() != 0
+    })
 }
 
 fn snapshot(view: &RwLock<Snapshot>) -> Result<Snapshot> {
@@ -688,9 +768,18 @@ async fn perform(
                     *cache = Some(session);
                 }
                 let session = cache.as_mut().context("Missing OFF session")?;
+                if work.shutdown && check_input {
+                    let _ = journal.record("shutdown_foreground_query", json!({"ip":config.ip}));
+                }
                 if check_input
                     && !controller::protected_input_active(session, config, journal).await
                 {
+                    return Ok(false);
+                }
+                // Intent can arrive while the foreground request is in flight.
+                // Only the final SCM worker may send a protected shutdown OFF.
+                if check_input && !work.shutdown && protected_shutdown_pending() {
+                    let _ = journal.record("off_deferred_shutdown", json!({"ip":config.ip}));
                     return Ok(false);
                 }
                 let evidence = session.power_off_tracked(Some(attempted)).await?;
@@ -770,9 +859,11 @@ fn event_work(
     state: &mut State,
     automatic: bool,
     view: &RwLock<Snapshot>,
+    shutdown_pending: bool,
 ) -> (Option<Work>, Option<std::sync::mpsc::SyncSender<()>>) {
     let target = state.apply_notice(&notice);
-    let work = if automatic {
+    let protected_pending = shutdown_pending && snapshot(view).is_ok_and(|s| s.keep_tv_on);
+    let work = if automatic && !protected_pending {
         if matches!(notice.event, Event::Suspend | Event::SessionEnding) {
             Some(Work::target(Target::Off, true))
         } else if notice.event == Event::NetworkChanged
@@ -842,6 +933,7 @@ fn command_work(
         check_input: matches!(request, Request::Sleep),
         urgent: false,
         delay: Duration::ZERO,
+        shutdown: false,
         reply: Some(reply),
     })
 }
@@ -884,10 +976,12 @@ async fn run() -> Result<()> {
     }));
     let (events_tx, mut events) = crate::sync::notice_channel();
     let (stop_tx, mut stop) = watch::channel(0);
+    let (shutdown_tx, mut shutdown) = watch::channel(ShutdownPhase::Cancel);
     BRIDGE
         .set(Bridge {
             events: events_tx,
             stop: stop_tx,
+            shutdown: shutdown_tx.clone(),
         })
         .map_err(|_| anyhow::anyhow!("Service bridge already exists"))?;
     let server = pipe(&settings.owner_sid, true)?;
@@ -929,6 +1023,7 @@ async fn run() -> Result<()> {
         settings.owner_sid.clone(),
         commands_tx,
         view.clone(),
+        shutdown_tx.clone(),
     ));
     status(SERVICE_RUNNING, 0);
     let _ = journal.record("service_control_ready", json!({"elapsed_ms":started.elapsed().as_millis(), "automatic":settings.automatic, "ui_required":false}));
@@ -947,6 +1042,7 @@ async fn run() -> Result<()> {
     let mut screen_sequence = crate::screen_protection::Sequence::default();
     let mut screen_owner_changed = false;
     let mut screen_session = crate::screen_protection::SessionPolicy::default();
+    let mut query_lease = QueryLease::default();
     loop {
         if screen_owner_changed {
             for device in &mut fleet.0 {
@@ -1003,6 +1099,15 @@ async fn run() -> Result<()> {
                 error,
             });
         }
+        if settings.keep_tv_on
+            && *shutdown.borrow() != ShutdownPhase::Cancel
+            && work.as_ref().is_some_and(|work| work.reply.is_none())
+        {
+            work = None;
+            if let Some(ack) = suspend_ack.take() {
+                let _ = ack.try_send(());
+            }
+        }
         if let Some(mut current) = work.take() {
             let current_ack = suspend_ack.take();
             if matches!(current.kind, Kind::Off)
@@ -1042,13 +1147,23 @@ async fn run() -> Result<()> {
                     tokio::select! {
                         biased;
                         _ = stop.changed() => break None,
+                        _ = shutdown.changed() => {
+                            let phase = *shutdown.borrow_and_update();
+                            let resume = query_lease.observe(phase);
+                            let _ = journal.record("shutdown_intent", json!({"source":"session_ipc", "phase":phase}));
+                            if settings.keep_tv_on && is_auto {
+                                work = (resume && settings.automatic)
+                                    .then(|| state.desired_target().map(|target| Work::target(target, false))).flatten();
+                                break None;
+                            }
+                        }
                         result = &mut server_task => { result??; bail!("Service IPC stopped unexpectedly"); }
                         notice = events.recv() => {
                             let notice = notice.context("Service events closed")?;
                             screen_session.apply(notice.event);
                             let panel_cancel = matches!(current.kind, Kind::Screen(_)) && !screen_session.allowed();
                             let _ = journal.record("windows_event", json!({"event":notice.event}));
-                            let (next, ack) = event_work(notice, &mut state, settings.automatic && !fleet_empty, &view);
+                            let (next, ack) = event_work(notice, &mut state, settings.automatic && !fleet_empty, &view, *shutdown.borrow() != ShutdownPhase::Cancel);
                             if let Some(next) = next { work = Some(next); if let Some(old) = suspend_ack.take() { let _ = old.try_send(()); } suspend_ack = ack; break None; }
                             if let Some(ack) = ack { let _ = ack.try_send(()); }
                             if panel_cancel { work = None; break None; }
@@ -1133,6 +1248,7 @@ async fn run() -> Result<()> {
                             check_input: false,
                             urgent: false,
                             delay: Duration::from_secs(u64::from(repair_attempts)),
+                            shutdown: false,
                             reply: None,
                         });
                     }
@@ -1165,6 +1281,21 @@ async fn run() -> Result<()> {
         tokio::select! {
             biased;
             _ = stop.changed() => break,
+            _ = shutdown.changed() => {
+                let phase = *shutdown.borrow_and_update();
+                let resume = query_lease.observe(phase);
+                let _ = journal.record("shutdown_intent", json!({"source":"session_ipc", "phase":phase}));
+                if settings.keep_tv_on && settings.automatic && !fleet.0.is_empty() && resume {
+                    work = state.desired_target().map(|target| Work::target(target, false));
+                }
+            }
+            _ = tokio::time::sleep_until(query_lease.deadline), if *shutdown.borrow() == ShutdownPhase::Query => {
+                // Do not replay an old OFF on expiry. Subsequent ordinary
+                // events work normally, without guessing that shutdown won.
+                if query_lease.expire(&shutdown_tx) {
+                    let _ = journal.record("shutdown_query_expired", json!({"reason":"session_confirmation_unavailable"}));
+                }
+            }
             result = &mut server_task => { result??; bail!("Service IPC stopped unexpectedly"); }
             notice = events.recv() => {
                 let notice = notice.context("Service events closed")?;
@@ -1175,8 +1306,9 @@ async fn run() -> Result<()> {
                 // A late NIC becoming available re-arms a failed desired ON,
                 // while an OFF policy never wakes the TV merely for discovery.
                 let network_retry = notice.event == Event::NetworkChanged && settings.automatic && state.desired_target() == Some(Target::On) && snapshot(&view)?.power == "unknown";
-                let (next, ack) = event_work(notice, &mut state, settings.automatic && !fleet.0.is_empty(), &view);
-                work = if network_retry { Some(Work::target(Target::On, true)) } else { next };
+                let pending = settings.keep_tv_on && *shutdown.borrow() != ShutdownPhase::Cancel;
+                let (next, ack) = event_work(notice, &mut state, settings.automatic && !fleet.0.is_empty(), &view, pending);
+                work = if network_retry && !pending { Some(Work::target(Target::On, true)) } else { next };
                 if work.is_some() { suspend_ack = ack; } else if let Some(ack) = ack { let _ = ack.try_send(()); }
             }
             envelope = commands.recv() => {
@@ -1217,7 +1349,7 @@ async fn run() -> Result<()> {
                     let _ = journal.record("idle_connection_closed", json!({"error":error.to_string()}));
                     if settings.automatic && state.desired_target() == Some(Target::On) {
                         repair_attempts = 1;
-                        work = Some(Work { kind: Kind::Refresh, check_input: false, urgent: false, delay: Duration::from_millis(250), reply: None });
+                        work = Some(Work { kind: Kind::Refresh, check_input: false, urgent: false, delay: Duration::from_millis(250), shutdown: false, reply: None });
                     }
                 }
             }
@@ -1228,27 +1360,78 @@ async fn run() -> Result<()> {
         let _ = ack.try_send(());
     }
     let reason = *stop.borrow();
-    if reason != SERVICE_CONTROL_STOP && settings.automatic && !fleet.all_off_attempted() {
-        let work = Work {
-            kind: Kind::Off,
-            check_input: true,
-            urgent: false,
-            delay: Duration::ZERO,
-            reply: None,
-        };
-        // Enclosing 3.5 s deadline includes connect/registration and response.
-        // No polling or indefinite shutdown.
-        let result = timeout(
-            Duration::from_millis(3500),
-            fleet.perform(&work, &journal, &view),
-        )
-        .await;
-        let _ = journal.record("service_shutdown_off", json!({"success":matches!(result, Ok(Ok(()))), "off_may_have_been_sent":fleet.all_off_attempted(), "physical_state":"not_observed"}));
-    } else {
-        let _ = journal.record("service_shutdown_off_skipped", json!({"ordinary_stop":reason == SERVICE_CONTROL_STOP, "automatic":settings.automatic, "previous_off_may_have_been_sent":fleet.all_off_attempted()}));
-    }
+    finish_shutdown(&mut fleet, &settings, reason, &journal, &view, || {
+        status(SERVICE_STOP_PENDING, 0)
+    })
+    .await;
     let _ = journal.record("service_stopped", json!({"reason":reason}));
     Ok(())
+}
+
+async fn finish_shutdown(
+    fleet: &mut Fleet,
+    settings: &Settings,
+    reason: u32,
+    journal: &Journal,
+    view: &RwLock<Snapshot>,
+    mut checkpoint: impl FnMut(),
+) {
+    let source = match reason {
+        SERVICE_CONTROL_PRESHUTDOWN => "scm_preshutdown",
+        SERVICE_CONTROL_SHUTDOWN => "scm_shutdown",
+        SERVICE_CONTROL_STOP => "scm_stop",
+        _ => "unknown",
+    };
+    let mut log = journal.clone();
+    let _ = log.record(
+        "service_stop_received",
+        json!({"source":source,"received_at_ms":STOP_RECEIVED_AT.load(Ordering::Acquire)}),
+    );
+    if !matches!(
+        reason,
+        SERVICE_CONTROL_PRESHUTDOWN | SERVICE_CONTROL_SHUTDOWN
+    ) || !settings.automatic
+        || fleet.0.is_empty()
+        || fleet.all_off_attempted()
+    {
+        let _ = log.record("service_shutdown_off_skipped", json!({"ordinary_stop":reason == SERVICE_CONTROL_STOP,"automatic":settings.automatic,"previous_off_may_have_been_sent":fleet.all_off_attempted()}));
+        return;
+    }
+    let protected = settings.keep_tv_on;
+    let elapsed = STOP_STARTED.get().map_or(Duration::ZERO, Instant::elapsed);
+    let budget = if protected {
+        PROTECTED_SHUTDOWN_BUDGET.saturating_sub(elapsed)
+    } else {
+        Duration::from_millis(3500)
+    };
+    let operation = async {
+        if protected {
+            let _ = log.record("shutdown_grace_started", json!({"source":source,"grace_ms":SHUTDOWN_GRACE.as_millis(),"budget_ms":budget.as_millis()}));
+            sleep(SHUTDOWN_GRACE.saturating_sub(elapsed)).await;
+            let _ = log.record("shutdown_grace_finished", json!({"source":source}));
+        }
+        let mut work = Work::target(Target::Off, protected);
+        work.shutdown = true;
+        fleet.perform(&work, journal, view).await
+    };
+    let result = {
+        let operation = timeout(budget, operation);
+        tokio::pin!(operation);
+        let mut progress = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            tokio::select! {
+                biased;
+                result = &mut operation => break result,
+                _ = progress.tick() => checkpoint(),
+            }
+        }
+    };
+    let error = match &result {
+        Err(_) => Some("shutdown_budget_expired".to_owned()),
+        Ok(Err(error)) => Some(format!("{error:#}")),
+        Ok(Ok(())) => None,
+    };
+    let _ = log.record("service_shutdown_off", json!({"source":source,"success":error.is_none(),"error":error,"off_may_have_been_sent":fleet.0.iter().any(|d| d.off_attempted.load(Ordering::Acquire)),"physical_state":"not_observed"}));
 }
 
 #[cfg(test)]
@@ -1256,6 +1439,474 @@ mod tests {
     use super::*;
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
+
+    fn shutdown_settings(protected: bool) -> Settings {
+        Settings {
+            owner_sid: "test".into(),
+            automatic: true,
+            keep_tv_on: protected,
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_lost_cancel_expires_without_replaying_off_or_overriding_confirmation() {
+        let (sender, mut receiver) = watch::channel(ShutdownPhase::Cancel);
+        let mut lease = QueryLease::default();
+        publish_shutdown(&sender, ShutdownPhase::Query);
+        assert!(!lease.observe(*receiver.borrow_and_update()));
+        let deadline = lease.deadline;
+        tokio::time::advance(Duration::from_secs(59)).await;
+        assert!(tokio::time::Instant::now() < deadline);
+        assert_eq!(*receiver.borrow(), ShutdownPhase::Query);
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert_eq!(tokio::time::Instant::now(), deadline);
+        assert!(lease.expire(&sender));
+        assert_eq!(*receiver.borrow(), ShutdownPhase::Cancel);
+        assert!(!lease.observe(*receiver.borrow_and_update()));
+        publish_shutdown(&sender, ShutdownPhase::Query);
+        assert!(!lease.observe(*receiver.borrow_and_update()));
+        assert!(lease.deadline > deadline);
+        publish_shutdown(&sender, ShutdownPhase::Cancel);
+        assert!(lease.observe(*receiver.borrow_and_update()));
+        publish_shutdown(&sender, ShutdownPhase::Confirm);
+        assert!(!lease.expire(&sender));
+        assert_eq!(*receiver.borrow(), ShutdownPhase::Confirm);
+    }
+
+    #[tokio::test]
+    async fn shutdown_queries_latest_input_after_grace_and_sends_at_most_one_off() {
+        for app in [
+            "netflix",
+            "youtube.leanback.v4",
+            "com.webos.app.hdmi1",
+            "com.webos.app.hdmi2",
+        ] {
+            let (session, mut peer) = crate::ssap::tests::peer().await;
+            let queries = Arc::new(AtomicUsize::new(0));
+            let offs = Arc::new(AtomicUsize::new(0));
+            let foreground = Arc::new(RwLock::new("com.webos.app.hdmi2".to_owned()));
+            let (query_count, off_count, current_app) =
+                (queries.clone(), offs.clone(), foreground.clone());
+            let remote = tokio::spawn(async move {
+                while let Some(Ok(frame)) = peer.next().await {
+                    if !frame.is_text() {
+                        continue;
+                    }
+                    let frame: serde_json::Value =
+                        serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                    let payload = if frame["uri"] == crate::ssap::FOREGROUND_APP {
+                        query_count.fetch_add(1, Ordering::AcqRel);
+                        json!({"returnValue":true,"appId":current_app.read().unwrap().clone()})
+                    } else {
+                        assert_eq!(frame["uri"], crate::ssap::POWER_OFF);
+                        off_count.fetch_add(1, Ordering::AcqRel);
+                        json!({"returnValue":true})
+                    };
+                    peer.send(Message::Text(
+                        json!({"id":frame["id"],"type":"response","payload":payload})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .unwrap();
+                }
+            });
+            let mut config = config(1);
+            config.set_manual_hdmi(2);
+            let mut fleet = Fleet::new(vec![config]).unwrap();
+            fleet.0[0].session = Some(session);
+            let view = view();
+            edit(&view, |s| s.keep_tv_on = true);
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("events.jsonl");
+            let journal = Journal::open(&path).unwrap();
+            tokio::time::pause();
+            let started = tokio::time::Instant::now();
+            let task = tokio::spawn(async move {
+                finish_shutdown(
+                    &mut fleet,
+                    &shutdown_settings(true),
+                    SERVICE_CONTROL_PRESHUTDOWN,
+                    &journal,
+                    &view,
+                    || {},
+                )
+                .await;
+                fleet
+            });
+            tokio::task::yield_now().await;
+            tokio::time::advance(Duration::from_secs(2)).await;
+            assert_eq!(queries.load(Ordering::Acquire), 0);
+            assert_eq!(offs.load(Ordering::Acquire), 0);
+            *foreground.write().unwrap() = app.into();
+            tokio::time::advance(Duration::from_millis(1999)).await;
+            assert_eq!(queries.load(Ordering::Acquire), 0);
+            assert!(!task.is_finished());
+            tokio::time::advance(Duration::from_millis(1)).await;
+            tokio::time::resume(); // Real loopback readiness must not advance virtual deadlines.
+            let mut fleet = timeout(Duration::from_secs(3), task)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(started.elapsed() >= SHUTDOWN_GRACE);
+            fleet.clear_sessions();
+            remote.await.unwrap();
+            assert_eq!(queries.load(Ordering::Acquire), 1);
+            assert_eq!(
+                offs.load(Ordering::Acquire),
+                usize::from(app == "com.webos.app.hdmi2")
+            );
+            let log = std::fs::read_to_string(path).unwrap();
+            assert_eq!(log.matches("shutdown_grace_started").count(), 1);
+            assert_eq!(log.matches("shutdown_foreground_query").count(), 1);
+            assert!(log.contains(if app == "com.webos.app.hdmi2" {
+                "off_evidence"
+            } else {
+                "off_skipped_input"
+            }));
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_off_policy_is_immediate_and_ordinary_stop_never_queries() {
+        for reason in [
+            SERVICE_CONTROL_PRESHUTDOWN,
+            SERVICE_CONTROL_SHUTDOWN,
+            SERVICE_CONTROL_STOP,
+        ] {
+            let (session, mut peer) = crate::ssap::tests::peer().await;
+            let remote = tokio::spawn(async move {
+                let mut offs = 0;
+                while let Some(Ok(frame)) = peer.next().await {
+                    if !frame.is_text() {
+                        continue;
+                    }
+                    let frame: serde_json::Value =
+                        serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                    assert_eq!(frame["uri"], crate::ssap::POWER_OFF);
+                    offs += 1;
+                    peer.send(Message::Text(
+                        json!({"id":frame["id"],"type":"response","payload":{"returnValue":true}})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .unwrap();
+                }
+                offs
+            });
+            let mut fleet = Fleet::new(vec![config(1)]).unwrap();
+            fleet.0[0].session = Some(session);
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("events.jsonl");
+            let journal = Journal::open(&path).unwrap();
+            // STOP with protection ON is an update/restart, never a PC shutdown.
+            let protected = reason == SERVICE_CONTROL_STOP;
+            let view = view();
+            edit(&view, |s| s.keep_tv_on = protected);
+            timeout(
+                Duration::from_millis(500),
+                finish_shutdown(
+                    &mut fleet,
+                    &shutdown_settings(protected),
+                    reason,
+                    &journal,
+                    &view,
+                    || {},
+                ),
+            )
+            .await
+            .unwrap();
+            fleet.clear_sessions();
+            assert_eq!(
+                remote.await.unwrap(),
+                usize::from(reason != SERVICE_CONTROL_STOP)
+            );
+            assert!(
+                !std::fs::read_to_string(path)
+                    .unwrap()
+                    .contains("shutdown_grace_started")
+            );
+        }
+    }
+
+    #[test]
+    fn shutdown_query_cancels_cleanly_and_does_not_change_unprotected_or_sleep_timing() {
+        let (sender, mut receiver) = watch::channel(ShutdownPhase::Cancel);
+        publish_shutdown(&sender, ShutdownPhase::Query);
+        assert_eq!(*receiver.borrow_and_update(), ShutdownPhase::Query);
+        publish_shutdown(&sender, ShutdownPhase::Query);
+        assert!(!receiver.has_changed().unwrap());
+        let view = view();
+        edit(&view, |s| s.keep_tv_on = true);
+        let mut state = State::default();
+        state.apply(Event::DisplayOn);
+        for event in [Event::DisplayOff, Event::Suspend, Event::SessionEnding] {
+            let (work, _) = event_work(
+                Notice {
+                    preceding: None,
+                    event,
+                    suspend_ack: None,
+                },
+                &mut state,
+                true,
+                &view,
+                true,
+            );
+            assert!(work.is_none());
+        }
+        publish_shutdown(&sender, ShutdownPhase::Cancel);
+        assert_eq!(*receiver.borrow_and_update(), ShutdownPhase::Cancel);
+        let mut resumed = State::default();
+        resumed.apply(Event::DisplayOn);
+        let (deferred, _) = event_work(
+            Notice {
+                preceding: None,
+                event: Event::DisplayOff,
+                suspend_ack: None,
+            },
+            &mut resumed,
+            true,
+            &view,
+            true,
+        );
+        assert!(deferred.is_none());
+        let (on, _) = event_work(
+            Notice {
+                preceding: None,
+                event: Event::DisplayOn,
+                suspend_ack: None,
+            },
+            &mut resumed,
+            true,
+            &view,
+            false,
+        );
+        assert!(matches!(on.unwrap().kind, Kind::On));
+        let (off, _) = event_work(
+            Notice {
+                preceding: None,
+                event: Event::DisplayOff,
+                suspend_ack: None,
+            },
+            &mut resumed,
+            true,
+            &view,
+            false,
+        );
+        assert!(matches!(off.unwrap().kind, Kind::Off));
+        // A cancelled QUERY never publishes SessionEnding into the power state.
+        let mut state = State::default();
+        for protected in [false, true] {
+            edit(&view, |s| s.keep_tv_on = protected);
+            if !protected {
+                let (work, _) = event_work(
+                    Notice {
+                        preceding: None,
+                        event: Event::DisplayOff,
+                        suspend_ack: None,
+                    },
+                    &mut State::default(),
+                    true,
+                    &view,
+                    true,
+                );
+                assert_eq!(work.unwrap().delay, Duration::ZERO);
+            }
+            for event in [Event::Suspend, Event::SessionEnding] {
+                let (work, _) = event_work(
+                    Notice {
+                        preceding: None,
+                        event,
+                        suspend_ack: None,
+                    },
+                    &mut State::default(),
+                    true,
+                    &view,
+                    false,
+                );
+                let work = work.unwrap();
+                assert!(work.urgent);
+                assert_eq!(work.delay, Duration::ZERO);
+            }
+            let (work, _) = event_work(
+                Notice {
+                    preceding: None,
+                    event: Event::DisplayOff,
+                    suspend_ack: None,
+                },
+                &mut state,
+                true,
+                &view,
+                false,
+            );
+            if let Some(work) = work {
+                assert_eq!(work.delay, Duration::ZERO);
+            }
+        }
+        publish_shutdown(&sender, ShutdownPhase::Confirm);
+        publish_shutdown(&sender, ShutdownPhase::Cancel);
+        assert_eq!(*receiver.borrow(), ShutdownPhase::Confirm);
+    }
+
+    #[tokio::test]
+    async fn shutdown_slow_or_disconnected_tv_does_not_block_another_tv() {
+        for disconnect in [false, true] {
+            let (healthy, mut healthy_peer) = crate::ssap::tests::peer().await;
+            let (stalled, mut stalled_peer) = crate::ssap::tests::peer().await;
+            let healthy_done = Arc::new(AtomicBool::new(false));
+            let completed = healthy_done.clone();
+            let healthy_remote = tokio::spawn(async move {
+                for uri in [crate::ssap::FOREGROUND_APP, crate::ssap::POWER_OFF] {
+                    let frame = healthy_peer.next().await.unwrap().unwrap();
+                    let frame: serde_json::Value =
+                        serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                    assert_eq!(frame["uri"], uri);
+                    healthy_peer.send(Message::Text(json!({"id":frame["id"],"type":"response","payload":{"returnValue":true,"appId":"com.webos.app.hdmi2"}}).to_string().into())).await.unwrap();
+                }
+                completed.store(true, Ordering::Release);
+            });
+            let stalled_remote = tokio::spawn(async move {
+                let mut queries = 0;
+                while let Some(Ok(frame)) = stalled_peer.next().await {
+                    if !frame.is_text() {
+                        continue;
+                    }
+                    let frame: serde_json::Value =
+                        serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                    assert_eq!(frame["uri"], crate::ssap::FOREGROUND_APP);
+                    queries += 1;
+                    if disconnect {
+                        break;
+                    }
+                }
+                queries
+            });
+            let mut fleet = Fleet::new(vec![config(1), config(2)]).unwrap();
+            for device in &mut fleet.0 {
+                device.config.set_manual_hdmi(2);
+            }
+            fleet.0[0].session = Some(healthy);
+            fleet.0[1].session = Some(stalled);
+            let view = view();
+            edit(&view, |s| s.keep_tv_on = true);
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("events.jsonl");
+            let journal = Journal::open(&path).unwrap();
+            let checkpoints = Arc::new(AtomicUsize::new(0));
+            let progress = checkpoints.clone();
+            tokio::time::pause();
+            let task = tokio::spawn(async move {
+                finish_shutdown(
+                    &mut fleet,
+                    &shutdown_settings(true),
+                    SERVICE_CONTROL_SHUTDOWN,
+                    &journal,
+                    &view,
+                    || {
+                        progress.fetch_add(1, Ordering::AcqRel);
+                    },
+                )
+                .await;
+                fleet
+            });
+            tokio::task::yield_now().await;
+            for _ in 0..4 {
+                tokio::time::advance(Duration::from_secs(1)).await;
+            }
+            tokio::time::resume();
+            timeout(Duration::from_millis(300), healthy_remote)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(healthy_done.load(Ordering::Acquire));
+            if !disconnect {
+                assert!(!task.is_finished());
+            }
+            let fleet = timeout(Duration::from_secs(2), task)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(fleet.0[0].off_attempted.load(Ordering::Acquire));
+            assert!(!fleet.0[1].off_attempted.load(Ordering::Acquire));
+            assert_eq!(
+                stalled_remote.await.unwrap(),
+                if disconnect { 1 } else { 2 }
+            );
+            assert!(checkpoints.load(Ordering::Acquire) >= 4);
+            let log = std::fs::read_to_string(path).unwrap();
+            assert!(log.contains("off_skipped_input"));
+            assert_eq!(log.matches("off_evidence").count(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_missing_ack_keeps_transmission_evidence_without_resending() {
+        let (session, mut peer) = crate::ssap::tests::peer().await;
+        let remote = tokio::spawn(async move {
+            let frame = peer.next().await.unwrap().unwrap();
+            let frame: serde_json::Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+            assert_eq!(frame["uri"], crate::ssap::FOREGROUND_APP);
+            peer.send(Message::Text(json!({"id":frame["id"],"type":"response","payload":{"returnValue":true,"appId":"com.webos.app.hdmi2"}}).to_string().into())).await.unwrap();
+            let mut offs = 0;
+            while let Some(Ok(frame)) = peer.next().await {
+                if !frame.is_text() {
+                    continue;
+                }
+                let frame: serde_json::Value =
+                    serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                assert_eq!(frame["uri"], crate::ssap::POWER_OFF);
+                offs += 1;
+            }
+            offs
+        });
+        let mut config = config(1);
+        config.set_manual_hdmi(2);
+        let mut fleet = Fleet::new(vec![config]).unwrap();
+        fleet.0[0].session = Some(session);
+        let view = view();
+        edit(&view, |s| s.keep_tv_on = true);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        let journal = Journal::open(&path).unwrap();
+        tokio::time::pause();
+        let task = tokio::spawn(async move {
+            finish_shutdown(
+                &mut fleet,
+                &shutdown_settings(true),
+                SERVICE_CONTROL_PRESHUTDOWN,
+                &journal,
+                &view,
+                || {},
+            )
+            .await;
+            finish_shutdown(
+                &mut fleet,
+                &shutdown_settings(true),
+                SERVICE_CONTROL_SHUTDOWN,
+                &journal,
+                &view,
+                || {},
+            )
+            .await;
+            fleet
+        });
+        tokio::task::yield_now().await;
+        tokio::time::advance(SHUTDOWN_GRACE).await;
+        tokio::time::resume();
+        let fleet = timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(fleet.all_off_attempted());
+        assert_eq!(remote.await.unwrap(), 1);
+        let log = std::fs::read_to_string(path).unwrap();
+        assert_eq!(log.matches("shutdown_grace_started").count(), 1);
+        assert!(log.contains("service_shutdown_off_skipped"));
+        assert!(log.contains("OFF budget expired"));
+        assert!(log.contains("\"success\":false"));
+        assert!(!log.contains("off_evidence"));
+    }
 
     #[tokio::test]
     async fn completed_tv_connection_survives_another_tvs_cancelled_query() {
@@ -1284,6 +1935,7 @@ mod tests {
             check_input: false,
             urgent: false,
             delay: Duration::ZERO,
+            shutdown: false,
             reply: None,
         };
         assert!(
@@ -1772,6 +2424,7 @@ mod tests {
             &mut state,
             false,
             &view,
+            false,
         );
         assert!(work.is_none());
         state.apply(Event::Suspend);
@@ -1784,6 +2437,7 @@ mod tests {
             &mut state,
             true,
             &view,
+            false,
         );
         assert!(work.is_none());
         let (work, _) = event_work(
@@ -1795,6 +2449,7 @@ mod tests {
             &mut state,
             true,
             &view,
+            false,
         );
         assert!(matches!(work.unwrap().kind, Kind::On));
     }

@@ -26,6 +26,9 @@ pub enum Event {
     ResumeAutomatic,
     ResumeInteractive,
     SessionEnding,
+    ShutdownQuery,
+    ShutdownCancelled,
+    ShutdownConfirmed,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -89,6 +92,7 @@ impl State {
             | Event::DisplayTopologyChanged
             | Event::SessionLocked
             | Event::SessionUnlocked => None,
+            Event::ShutdownQuery | Event::ShutdownCancelled | Event::ShutdownConfirmed => None,
             Event::ScreenProtection(_) => None,
         };
         if let Some(desired) = desired

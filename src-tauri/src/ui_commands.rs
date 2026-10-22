@@ -909,6 +909,9 @@ pub(super) async fn set_keep_tv_on(
         s.keep_tv_on = enabled;
         s.error = None;
     });
+    if let Some(source) = &state._source {
+        source.set_shutdown_relay(state.service_mode && enabled);
+    }
     if enabled {
         let _ = refresh_devices(&state, &app);
         if state.service_mode {

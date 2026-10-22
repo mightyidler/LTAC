@@ -986,6 +986,9 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     let source = Some(tauri::async_runtime::block_on(
         ltac::windows_events::Source::start(native_sender, true),
     )?);
+    if let Some(source) = &source {
+        source.set_shutdown_relay(service_mode && preferences.keep_tv_on);
+    }
     let hotkey = ui::Hotkey::start(app.handle().clone(), false);
     let screen_hotkey = ui::Hotkey::start(app.handle().clone(), true);
     if preferences.screen_enabled
@@ -1092,6 +1095,31 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     tauri::async_runtime::spawn(async move {
         while let Some(notice) = native_events.recv().await {
             let state = handle.state::<Desktop>();
+            let phase = match notice.event {
+                Event::ShutdownQuery => Some(ltac::service_ipc::ShutdownPhase::Query),
+                Event::ShutdownCancelled => Some(ltac::service_ipc::ShutdownPhase::Cancel),
+                Event::ShutdownConfirmed => Some(ltac::service_ipc::ShutdownPhase::Confirm),
+                _ => None,
+            };
+            if let Some(phase) = phase {
+                if state.service_mode {
+                    let result = tokio::time::timeout(
+                        Duration::from_millis(250),
+                        ltac::service_ipc::request(ltac::service_ipc::Request::Shutdown { phase }),
+                    )
+                    .await;
+                    if !matches!(result, Ok(Ok(_))) {
+                        let _ = state
+                            .journal
+                            .clone()
+                            .record("shutdown_relay_failed", json!({"phase":phase}));
+                    }
+                }
+                if let Some(ack) = notice.suspend_ack {
+                    let _ = ack.try_send(());
+                }
+                continue;
+            }
             screen::native_event(&state, notice.event);
             if notice.event == Event::DisplayTopologyChanged {
                 topology_sender.send_modify(|generation| *generation = generation.wrapping_add(1));

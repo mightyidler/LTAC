@@ -5,6 +5,10 @@ use crate::sync::{Event, Notice};
 use anyhow::{Context, Result, bail};
 use std::{
     ptr::{null, null_mut},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 use tokio::sync::oneshot;
@@ -33,11 +37,14 @@ use windows_sys::Win32::{
 pub struct Source {
     hwnd: usize,
     thread: Option<std::thread::JoinHandle<()>>,
+    shutdown_relay: Arc<AtomicBool>,
 }
 struct ContextData {
     sender: NoticeSender,
     wait_for_suspend: bool,
     display_connections: std::cell::RefCell<Option<Vec<(i32, u32, u32)>>>,
+    shutdown_relay: Arc<AtomicBool>,
+    shutdown_query: std::cell::Cell<bool>,
 }
 
 /// Read connector IDs only on native notifications; never poll or read EDID here.
@@ -109,6 +116,8 @@ unsafe extern "system" fn network_changed(
 impl Source {
     pub async fn start(sender: NoticeSender, wait_for_suspend: bool) -> Result<Self> {
         let (ready_tx, ready_rx) = oneshot::channel();
+        let shutdown_relay = Arc::new(AtomicBool::new(false));
+        let relay = shutdown_relay.clone();
         let thread = std::thread::spawn(move || {
             let mut ready_tx = Some(ready_tx);
             let result = unsafe {
@@ -117,6 +126,8 @@ impl Source {
                         sender,
                         wait_for_suspend,
                         display_connections: std::cell::RefCell::new(display_connections()),
+                        shutdown_relay: relay,
+                        shutdown_query: std::cell::Cell::new(false),
                     },
                     &mut ready_tx,
                 )
@@ -134,7 +145,13 @@ impl Source {
         Ok(Self {
             hwnd,
             thread: Some(thread),
+            shutdown_relay,
         })
+    }
+
+    /// Enabled only for the existing protected policy in service mode.
+    pub fn set_shutdown_relay(&self, enabled: bool) {
+        self.shutdown_relay.store(enabled, Ordering::Release);
     }
 }
 impl Drop for Source {
@@ -284,9 +301,32 @@ unsafe extern "system" fn window_proc(
             WM_QUERYENDSESSION => {
                 // A query can be cancelled by another application. Never send
                 // OFF here and never veto Windows shutdown.
+                let context = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const ContextData;
+                if !context.is_null()
+                    && (*context).shutdown_relay.load(Ordering::Acquire)
+                    && (lparam as u32 & (ENDSESSION_CLOSEAPP | ENDSESSION_LOGOFF)) == 0
+                {
+                    (*context).shutdown_query.set(true);
+                    shutdown_notice(hwnd, Event::ShutdownQuery);
+                }
                 return 1;
             }
             WM_ENDSESSION => {
+                let context = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const ContextData;
+                if !context.is_null()
+                    && ((*context).shutdown_query.replace(false)
+                        || (*context).shutdown_relay.load(Ordering::Acquire))
+                    && (lparam as u32 & (ENDSESSION_CLOSEAPP | ENDSESSION_LOGOFF)) == 0
+                {
+                    shutdown_notice(
+                        hwnd,
+                        if wparam == 0 {
+                            Event::ShutdownCancelled
+                        } else {
+                            Event::ShutdownConfirmed
+                        },
+                    );
+                }
                 if wparam != 0 && (lparam as u32 & ENDSESSION_CLOSEAPP) == 0 {
                     crate::lifecycle::begin_ending();
                     let context = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const ContextData;
@@ -420,12 +460,97 @@ unsafe extern "system" fn window_proc(
     }
 }
 
+/// Allow the existing desktop event router to relay intent to the service before
+/// returning to Windows. This ACK covers local IPC only, never TV/network work.
+unsafe fn shutdown_notice(hwnd: HWND, event: Event) {
+    let context = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const ContextData };
+    if context.is_null() {
+        return;
+    }
+    let (ack, wait) = std::sync::mpsc::sync_channel(1);
+    if unsafe { &*context }
+        .sender
+        .send(Notice {
+            preceding: None,
+            event,
+            suspend_ack: Some(ack),
+        })
+        .is_ok()
+    {
+        let _ = wait.recv_timeout(Duration::from_millis(300));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    static NATIVE_WINDOW: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    #[tokio::test]
+    async fn shutdown_query_and_cancel_are_reversible_and_ignore_logoff_or_app_update() {
+        let _window = NATIVE_WINDOW.lock().await;
+        let (sender, mut receiver) = crate::sync::notice_channel();
+        let source = Source::start(sender, false).await.unwrap();
+        source.set_shutdown_relay(true);
+        let hwnd = source.hwnd;
+        let send = |message, flags| {
+            tokio::task::spawn_blocking(move || unsafe {
+                SendMessageW(hwnd as HWND, message, 0, flags)
+            })
+        };
+        let query = send(WM_QUERYENDSESSION, 0);
+        // Native registration can supply initial display/network notices.
+        loop {
+            let notice = timeout_notice(&mut receiver).await;
+            if notice.event == Event::ShutdownQuery {
+                notice.suspend_ack.unwrap().try_send(()).unwrap();
+                break;
+            }
+        }
+        assert_eq!(query.await.unwrap(), 1);
+        // Disabling the preference during a query must still relay its cancel.
+        source.set_shutdown_relay(false);
+        let cancelled = send(WM_ENDSESSION, 0);
+        loop {
+            let notice = timeout_notice(&mut receiver).await;
+            if notice.event == Event::ShutdownCancelled {
+                notice.suspend_ack.unwrap().try_send(()).unwrap();
+                break;
+            }
+        }
+        assert_eq!(cancelled.await.unwrap(), 0);
+        source.set_shutdown_relay(true);
+        for flags in [ENDSESSION_CLOSEAPP, ENDSESSION_LOGOFF] {
+            assert_eq!(send(WM_QUERYENDSESSION, flags as isize).await.unwrap(), 1);
+            send(WM_ENDSESSION, flags as isize).await.unwrap();
+        }
+        source.set_shutdown_relay(false);
+        assert_eq!(send(WM_QUERYENDSESSION, 0).await.unwrap(), 1);
+        send(WM_ENDSESSION, 0).await.unwrap();
+        while let Ok(Some(notice)) =
+            tokio::time::timeout(Duration::from_millis(20), receiver.recv()).await
+        {
+            assert!(!matches!(
+                notice.event,
+                Event::ShutdownQuery
+                    | Event::ShutdownCancelled
+                    | Event::ShutdownConfirmed
+                    | Event::SessionEnding
+            ));
+        }
+        assert!(!crate::lifecycle::is_ending());
+    }
+
+    async fn timeout_notice(receiver: &mut crate::sync::NoticeReceiver) -> Notice {
+        tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap()
+    }
 
     #[tokio::test]
     async fn native_registration_and_shutdown_release_window_and_class() {
+        let _window = NATIVE_WINDOW.lock().await;
         // Actual Win32 APIs, no TV traffic. Reopening proves both registration
         // handles, the hidden HWND and its class have been released.
         for _ in 0..2 {

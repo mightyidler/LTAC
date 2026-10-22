@@ -12,6 +12,16 @@ pub const NAME: &str = "LTACPower";
 pub const PIPE: &str = r"\\.\pipe\LTAC.Power.v1";
 pub const MAX_FRAME: u64 = 65536;
 
+/// A session query is reversible; only SCM owns service shutdown and TV I/O.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShutdownPhase {
+    Query,
+    #[default]
+    Cancel,
+    Confirm,
+}
+
 /// Installer-only administrative operation; never starts the service or sends
 /// a power command. sc.exe does not expose a `preshutdown` command on Windows.
 pub fn configure_preshutdown() -> Result<()> {
@@ -73,6 +83,9 @@ pub fn configure_preshutdown() -> Result<()> {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    Shutdown {
+        phase: ShutdownPhase,
+    },
     Subscribe,
     Snapshot,
     Refresh,

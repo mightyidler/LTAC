@@ -4,6 +4,10 @@ version = "0.1.9"
 edition = "2024"
 description = "LG TV Auto Control"
 
+[[bin]]
+name = "LTAC"
+path = "src/main.rs"
+
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 

@@ -33,6 +33,7 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "LTAC",
     "targets": [
       "nsis"
     ],

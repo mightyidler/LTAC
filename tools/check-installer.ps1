@@ -19,6 +19,11 @@ for ($attempt = 1; $attempt -le 2; $attempt++) {
     Run-Installer $installerPath '/S'
     $service = Get-Service LTACPower
     if ($service.Status -ne 'Running') { throw 'Installed service is not running.' }
+    if ($service.DisplayName -cne 'LTAC') { throw 'Installed service display name must be LTAC.' }
+    $appPath = Join-Path $install 'LTAC.exe'
+    $appVersion = (Get-Item -LiteralPath $appPath).VersionInfo
+    if ($appVersion.ProductName -cne 'LTAC' -or $appVersion.FileDescription -cne 'LTAC' -or $appVersion.CompanyName -cne 'LTAC') { throw 'Desktop executable metadata must use LTAC.' }
+    if (Test-Path -LiteralPath (Join-Path $install 'ltac-desktop.exe')) { throw 'Install left the old desktop executable behind.' }
     $configuration = Start-Process -FilePath (Join-Path $install 'ltac-service.exe') -ArgumentList '--configure-service' -WindowStyle Hidden -Wait -PassThru
     if ($configuration.ExitCode -ne 0) { throw 'Preshutdown API configuration/readback failed.' }
     $log = Get-Content (Join-Path $data 'installation.log') -Raw
@@ -29,8 +34,9 @@ for ($attempt = 1; $attempt -le 2; $attempt++) {
     }
     Write-Output "NSIS installation ${attempt}: service running and preshutdown readback passed."
     if ($attempt -eq 1) {
-        $app = Start-Process -FilePath (Join-Path $install 'ltac-desktop.exe') -WindowStyle Hidden -PassThru
+        $app = Start-Process -FilePath $appPath -WindowStyle Hidden -PassThru
         try {
+            if ($app.ProcessName -cne 'LTAC') { throw 'Desktop process name must be LTAC.' }
             $deadline = (Get-Date).AddSeconds(25)
             $discovered = $false
             while ((Get-Date) -lt $deadline) {

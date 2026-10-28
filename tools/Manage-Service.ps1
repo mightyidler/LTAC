@@ -64,6 +64,7 @@ if (-not (Test-Path -LiteralPath $settingsPath)) {
     [IO.File]::WriteAllText($settingsPath, $settings, [Text.UTF8Encoding]::new($false))
 }
 $arguments = @{
+    DisplayName = 'LTAC';
     PathName = ('"' + $binary + '"'); StartMode = 'Automatic';
     StartName = 'NT AUTHORITY\LocalService'; StartPassword = '';
     ServiceDependencies = [string[]]@('Tcpip')
@@ -72,7 +73,7 @@ if ($service) {
     $instance = Get-CimInstance -ClassName Win32_Service -Filter "Name='LTACPower'"
     $result = Invoke-CimMethod -InputObject $instance -MethodName Change -Arguments $arguments
 } else {
-    $arguments.Name = 'LTACPower'; $arguments.DisplayName = 'LTAC Power'
+    $arguments.Name = 'LTACPower'
     $arguments.ServiceType = [byte]16; $arguments.ErrorControl = [byte]1; $arguments.DesktopInteract = $false
     $result = Invoke-CimMethod -ClassName Win32_Service -MethodName Create -Arguments $arguments
 }

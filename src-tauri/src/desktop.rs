@@ -1260,7 +1260,7 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     .max(16) as u32;
     TrayIconBuilder::with_id("ltac")
         .icon(tauri::image::Image::from_app_icon_resource(tray_size)?)
-        .tooltip("LTAC · LG TV Auto Control")
+        .tooltip("LTAC")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {

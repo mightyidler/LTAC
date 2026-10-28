@@ -18,6 +18,9 @@ for (const path of ['Cargo.toml', 'src-tauri/Cargo.toml']) {
 }
 assert.equal(config.bundle.windows.nsis.installMode, 'perMachine');
 assert.equal(config.bundle.createUpdaterArtifacts, true);
+assert.equal(config.productName, 'LTAC');
+assert.equal(config.bundle.publisher, 'LTAC');
+for (const window of config.app.windows) assert.equal(window.title, 'LTAC');
 assert.equal(config.bundle.resources['../target/release/ltac-service.exe'], 'ltac-service.exe');
 if (process.argv.includes('--package')) {
   for (const path of Object.keys(config.bundle.resources)) {
@@ -36,9 +39,10 @@ if (process.argv.includes('--package')) {
   try { await access('C:/Program Files/7-Zip/7z.exe'); sevenZip = 'C:/Program Files/7-Zip/7z.exe'; } catch {}
   const { fileURLToPath } = await import('node:url');
   execFileSync(sevenZip, ['x', fileURLToPath(new URL(installers[0], directory)), `-o${output}`, '-y'], { stdio: 'pipe' });
+  assert.deepEqual(await readFile(join(output, 'LTAC.exe')), await readFile(new URL('../src-tauri/target/release/LTAC.exe', import.meta.url)), 'LTAC.exe must match the release build');
   for (const [source, destination] of Object.entries(config.bundle.resources)) {
     assert.deepEqual(await readFile(join(output, destination)), await readFile(new URL(`../src-tauri/${source}`, import.meta.url)), `${destination} must match the release build`);
   }
-  console.log('NSIS extraction: service, CLI, and installer script match the release sources.');
+  console.log('NSIS extraction: LTAC.exe, service, CLI, and installer script match the release sources.');
 }
 console.log(`LTAC ${version}: version consistency and installer resources passed.`);

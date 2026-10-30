@@ -27,43 +27,103 @@ pub(super) fn native_event(state: &Desktop, event: Event) {
     state.screen_changed.notify_one();
 }
 
-fn input() -> Option<(u32, u32, bool)> {
+struct Environment {
+    notification_state: Option<i32>,
+    execution_state: Option<u32>,
+}
+
+impl Environment {
+    fn allow_auto(&self) -> bool {
+        use windows_sys::Win32::{
+            System::Power::ES_DISPLAY_REQUIRED,
+            UI::Shell::{QUNS_ACCEPTS_NOTIFICATIONS, QUNS_QUIET_TIME},
+        };
+        self.notification_state
+            .is_some_and(|value| matches!(value, QUNS_ACCEPTS_NOTIFICATIONS | QUNS_QUIET_TIME))
+            && self
+                .execution_state
+                .is_some_and(|value| value & ES_DISPLAY_REQUIRED == 0)
+    }
+}
+
+#[derive(Default)]
+struct InputMonitor {
+    enabled: Option<bool>,
+    wake_pending: bool,
+}
+impl InputMonitor {
+    fn tracking(&self, policy: Policy, allow_auto: bool, toggled: bool) -> bool {
+        policy.enabled
+            && policy.allowed
+            && (allow_auto || self.wake_pending || (toggled && policy.shortcut_enabled))
+    }
+
+    fn observe(&mut self, signal: Signal) {
+        match signal {
+            Signal::Idle | Signal::Toggle => self.wake_pending = true,
+            Signal::Active | Signal::Disabled => self.wake_pending = false,
+            Signal::Inhibited => {}
+        }
+    }
+}
+
+fn environment() -> Environment {
     use windows_sys::Win32::{
-        System::{
-            Power::{CallNtPowerInformation, ES_DISPLAY_REQUIRED, SystemExecutionState},
-            SystemInformation::GetTickCount,
-        },
-        UI::{
-            Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO},
-            Shell::{QUNS_ACCEPTS_NOTIFICATIONS, QUNS_QUIET_TIME, SHQueryUserNotificationState},
-        },
+        System::Power::{CallNtPowerInformation, SystemExecutionState},
+        UI::Shell::SHQueryUserNotificationState,
     };
     unsafe {
-        let mut info = LASTINPUTINFO {
-            cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
-            dwTime: 0,
-        };
-        if GetLastInputInfo(&mut info) == 0 {
-            return None;
-        }
         let mut notification = 0;
         let mut execution = 0u32;
-        let available = SHQueryUserNotificationState(&mut notification) >= 0
-            && matches!(notification, QUNS_ACCEPTS_NOTIFICATIONS | QUNS_QUIET_TIME)
-            && CallNtPowerInformation(
-                SystemExecutionState,
-                std::ptr::null(),
-                0,
-                (&mut execution as *mut u32).cast(),
-                std::mem::size_of::<u32>() as u32,
-            ) == 0
-            && execution & ES_DISPLAY_REQUIRED == 0;
-        Some((
-            info.dwTime,
-            GetTickCount().wrapping_sub(info.dwTime),
-            available,
-        ))
+        let notification_state =
+            (SHQueryUserNotificationState(&mut notification) >= 0).then_some(notification);
+        let execution_state = (CallNtPowerInformation(
+            SystemExecutionState,
+            std::ptr::null(),
+            0,
+            (&mut execution as *mut u32).cast(),
+            std::mem::size_of::<u32>() as u32,
+        ) == 0)
+            .then_some(execution);
+        Environment {
+            notification_state,
+            execution_state,
+        }
     }
+}
+
+fn system_idle_ms() -> Option<u32> {
+    use windows_sys::Win32::{
+        System::SystemInformation::GetTickCount,
+        UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO},
+    };
+    let mut info = LASTINPUTINFO {
+        cbSize: size_of::<LASTINPUTINFO>() as u32,
+        dwTime: 0,
+    };
+    // SendInput also updates this value. Read it only as diagnostic evidence
+    // on a state edge; never use it to reset the device-activity clock.
+    unsafe { (GetLastInputInfo(&mut info) != 0).then(|| GetTickCount().wrapping_sub(info.dwTime)) }
+}
+
+fn sample(policy: Policy, allow_auto: bool, device: Option<(u32, u32)>) -> Option<InputSample> {
+    if !policy.enabled || !policy.allowed {
+        return None;
+    }
+    if let Some((token, idle_ms)) = device {
+        return Some(InputSample {
+            token,
+            idle_ms,
+            allow_auto,
+        });
+    }
+    // The timer is paused during media/fullscreen use. Represent inhibition
+    // without pretending missing device data is a session boundary (Disabled).
+    (!allow_auto).then_some(InputSample {
+        token: 0,
+        idle_ms: policy.timeout_seconds.saturating_mul(1000),
+        allow_auto: false,
+    })
 }
 
 async fn send(state: &Desktop, signal: Signal) -> Result<()> {
@@ -98,6 +158,7 @@ pub(super) fn start(app: tauri::AppHandle, mut toggles: tokio::sync::mpsc::Recei
         let mut sampler = Sampler::default();
         let clock = std::time::Instant::now();
         let mut observed_epoch = u64::MAX;
+        let mut input_monitor = InputMonitor::default();
         loop {
             let snapshot = match read(&state) {
                 Ok(s) => s,
@@ -105,7 +166,8 @@ pub(super) fn start(app: tauri::AppHandle, mut toggles: tokio::sync::mpsc::Recei
             };
             let enabled = snapshot.screen_enabled
                 && snapshot.configured
-                && state.screen_allowed.load(Ordering::Acquire);
+                && state.screen_allowed.load(Ordering::Acquire)
+                && !ltac::lifecycle::is_ending();
             let toggled = tokio::select! {
                 biased;
                 value = toggles.recv() => { if value.is_none() { return; } true },
@@ -128,16 +190,48 @@ pub(super) fn start(app: tauri::AppHandle, mut toggles: tokio::sync::mpsc::Recei
                 shortcut_enabled: snapshot.screen_shortcut_enabled,
                 timeout_seconds: snapshot.screen_timeout_seconds,
             };
-            let sample = input().map(|(token, idle_ms, allow_auto)| InputSample {
-                token,
-                idle_ms,
-                allow_auto,
-            });
+            let environment = environment();
+            let allow_auto = environment.allow_auto();
+            let tracking = input_monitor.tracking(policy, allow_auto, toggled);
+            if input_monitor.enabled != Some(tracking) {
+                input_monitor.enabled = Some(tracking);
+                if let Err(error) = state.screen_hotkey.set_input_enabled(tracking) {
+                    let _ = state
+                        .journal
+                        .clone()
+                        .record("panel_input_failed", json!({"error":error.to_string()}));
+                    update(&state.view, &app, |s| {
+                        s.error = Some(
+                            "화면 보호 입력 감지를 시작하지 못했어요. LTAC를 다시 실행해주세요."
+                                .into(),
+                        );
+                    });
+                }
+            }
+            let device = state.screen_hotkey.input_idle();
+            let sample = sample(policy, allow_auto, device);
             let Some(signal) =
                 sampler.update(policy, sample, toggled, clock.elapsed().as_millis() as u64)
             else {
                 continue;
             };
+            input_monitor.observe(signal);
+            // Edges only: enough evidence to explain a missed timeout without
+            // polling the TV or retaining input content/window titles.
+            let _ = state.journal.clone().record(
+                "panel_activity",
+                json!({
+                    "signal": signal,
+                    "timeout_seconds": policy.timeout_seconds,
+                    "allowed": policy.allowed,
+                    "device_idle_ms": device.map(|(_,idle_ms)| idle_ms),
+                    "system_idle_ms": system_idle_ms(),
+                    "allow_auto": allow_auto,
+                    "input_tracking": tracking,
+                    "notification_state": environment.notification_state,
+                    "execution_state": environment.execution_state,
+                }),
+            );
             let result = {
                 let operation = send(&state, signal);
                 tokio::pin!(operation);
@@ -248,6 +342,92 @@ pub(super) async fn set_screen_protection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn media_pauses_tracking_but_preserves_input_wake_after_panel_entry() {
+        let policy = Policy {
+            enabled: true,
+            allowed: true,
+            shortcut_enabled: true,
+            timeout_seconds: 60,
+        };
+        let mut input = InputMonitor::default();
+        assert!(input.tracking(policy, true, false));
+        assert!(!input.tracking(policy, false, false));
+        assert!(input.tracking(policy, false, true));
+        input.observe(Signal::Idle);
+        input.observe(Signal::Inhibited);
+        assert!(input.tracking(policy, false, false));
+        input.observe(Signal::Active);
+        assert!(!input.tracking(policy, false, false));
+        input.observe(Signal::Toggle);
+        assert!(input.tracking(policy, false, false));
+        input.observe(Signal::Disabled);
+        assert!(!input.tracking(policy, false, false));
+        for blocked in [
+            Policy {
+                enabled: false,
+                ..policy
+            },
+            Policy {
+                allowed: false,
+                ..policy
+            },
+        ] {
+            assert!(!input.tracking(blocked, true, true));
+        }
+    }
+
+    #[test]
+    fn paused_tracking_does_not_discard_panel_ownership_and_resumes_with_fresh_delay() {
+        let policy = Policy {
+            enabled: true,
+            allowed: true,
+            shortcut_enabled: false,
+            timeout_seconds: 60,
+        };
+        let mut sampler = Sampler::default();
+        assert_eq!(
+            sampler.update(policy, sample(policy, false, None), false, 0),
+            Some(Signal::Inhibited)
+        );
+        assert_eq!(
+            sampler.update(policy, sample(policy, false, None), false, 500),
+            None
+        );
+        assert_eq!(
+            sampler.update(policy, sample(policy, true, Some((1, 500))), false, 1000),
+            Some(Signal::Active)
+        );
+        assert_eq!(
+            sampler.update(
+                policy,
+                sample(policy, true, Some((1, 59_999))),
+                false,
+                60_499
+            ),
+            None
+        );
+        assert_eq!(
+            sampler.update(
+                policy,
+                sample(policy, true, Some((1, 60_000))),
+                false,
+                60_500
+            ),
+            Some(Signal::Idle)
+        );
+        assert!(
+            sample(
+                Policy {
+                    allowed: false,
+                    ..policy
+                },
+                false,
+                None
+            )
+            .is_none()
+        );
+    }
     #[test]
     fn panel_permission_and_transport_failures_have_actionable_ui_messages() {
         let denied = anyhow::anyhow!("TV rejected request: 401 insufficient permissions");

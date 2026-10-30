@@ -26,6 +26,8 @@ use tokio::sync::Mutex;
 
 #[path = "screen.rs"]
 mod screen;
+#[path = "screen_input.rs"]
+mod screen_input;
 #[path = "ui_commands.rs"]
 mod ui;
 

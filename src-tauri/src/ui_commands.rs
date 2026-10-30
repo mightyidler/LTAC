@@ -338,19 +338,26 @@ pub(super) async fn remove_device(
     read(&state)
 }
 
+enum HotkeyCommand {
+    Shortcut(Option<String>),
+    TrackInput(bool),
+}
 type HotkeyRequest = (
-    Option<String>,
+    HotkeyCommand,
     mpsc::SyncSender<std::result::Result<(), String>>,
 );
 pub(super) struct Hotkey {
     sender: mpsc::SyncSender<HotkeyRequest>,
     thread_id: u32,
     thread: Option<std::thread::JoinHandle<()>>,
+    input: Option<Arc<screen_input::Activity>>,
 }
 impl Hotkey {
     pub(super) fn start(app: tauri::AppHandle, screen: bool) -> Self {
         let (sender, receiver) = mpsc::sync_channel::<HotkeyRequest>(1);
         let (ready, started) = mpsc::sync_channel(1);
+        let input = screen.then(screen_input::Activity::new);
+        let activity = input.clone();
         let thread = std::thread::spawn(move || {
             use windows_sys::Win32::UI::{
                 Input::KeyboardAndMouse::{MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey},
@@ -364,11 +371,33 @@ impl Hotkey {
                 ready.send(unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() });
             let mut active = false;
             let mut previous: Option<(u32, u32)> = None;
+            let mut input_registration = None;
             while unsafe { GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) } > 0 {
                 if ltac::lifecycle::is_ending() {
                     break;
                 }
-                while let Ok((shortcut, reply)) = receiver.try_recv() {
+                while let Ok((command, reply)) = receiver.try_recv() {
+                    let shortcut = match command {
+                        HotkeyCommand::Shortcut(shortcut) => shortcut,
+                        HotkeyCommand::TrackInput(enabled) => {
+                            let result = if enabled && input_registration.is_none() {
+                                activity
+                                    .as_ref()
+                                    .ok_or_else(|| "Input tracker is unavailable".to_owned())
+                                    .and_then(|activity| {
+                                        activity.register().map_err(|error| format!("{error:#}"))
+                                    })
+                                    .map(|registration| input_registration = Some(registration))
+                            } else {
+                                if !enabled {
+                                    input_registration.take();
+                                }
+                                Ok(())
+                            };
+                            let _ = reply.send(result);
+                            continue;
+                        }
+                    };
                     let result = shortcut
                         .as_deref()
                         .map(parse_shortcut)
@@ -435,12 +464,32 @@ impl Hotkey {
             sender,
             thread_id,
             thread: Some(thread),
+            input,
         }
     }
     pub(super) fn set(&self, shortcut: Option<String>) -> std::result::Result<(), String> {
+        self.request(HotkeyCommand::Shortcut(shortcut))
+    }
+
+    pub(super) fn input_idle(&self) -> Option<(u32, u32)> {
+        self.input.as_ref()?.sample()
+    }
+
+    pub(super) fn set_input_enabled(&self, enabled: bool) -> std::result::Result<(), String> {
+        if self
+            .input
+            .as_ref()
+            .is_some_and(|input| input.registered() == enabled)
+        {
+            return Ok(());
+        }
+        self.request(HotkeyCommand::TrackInput(enabled))
+    }
+
+    fn request(&self, command: HotkeyCommand) -> std::result::Result<(), String> {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
-            .try_send((shortcut, reply))
+            .try_send((command, reply))
             .map_err(|_| "단축키를 등록하지 못했어요.")?;
         if self.thread_id == 0
             || unsafe {

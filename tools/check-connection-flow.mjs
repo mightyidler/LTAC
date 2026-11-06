@@ -12,6 +12,7 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 const bridge = `
 export const desktop = true;
 let listener;
+let attempts = 0;
 let current = { configured:false, name:'OLED42C4ENA', stage:'choose', choices:[{id:'tv-1',name:'OLED42C4ENA',model:'OLED42C4ENA'}], devices:[], automatic:true, shortcut_enabled:false, shortcut:null, busy:false, error:null };
 export const appUpdateState = async () => ({version:'0.1.1',completed:false});
 export const checkAppUpdate = async () => ({status:'latest',version:'0.1.1'});
@@ -21,7 +22,8 @@ export async function command(name) {
   if (name === 'cancel_connection') { current = {...current, stage:'choose', busy:false}; listener(current); return current; }
   if (name !== 'pair_tv') return current;
   current = {...current,stage:'pairing',busy:true}; listener(current);
-  const fail = new URLSearchParams(location.search).has('failure');
+  attempts++;
+  const fail = attempts === 1 && new URLSearchParams(location.search).has('failure');
   await new Promise(resolve => setTimeout(resolve, 100));
   current = {...current,stage:fail?'pair_error':'ready',configured:!fail,busy:false,devices:fail?[]:[{id:'tv-1',name:'OLED42C4ENA',ip:'192.0.2.1',mac:null}]};
   // Tauri broadcasts terminal state before invoke resolves, and service updates
@@ -47,6 +49,7 @@ const config = {
     },
   }],
 };
+const rendererChunk = '**/assets/connection-renderer-*.js';
 let browser, server;
 try {
   await build(config);
@@ -100,24 +103,44 @@ try {
     await page.close();
   }
   const failure = await browser.newPage({ locale: 'ko-KR' });
+  await failure.route(rendererChunk, route => route.abort());
   await failure.goto('http://127.0.0.1:1421/?failure');
   await failure.getByRole('option', {name:'OLED42C4ENA'}).click();
   await failure.getByRole('button', {name:'연결',exact:true}).click();
   await failure.waitForSelector('#connection-indicator[data-state="failure"]');
-  await failure.getByRole('button', {name:'다시 시도'}).waitFor({state:'visible'});
+  const retry = failure.getByRole('button', {name:'다시 시도'});
+  await retry.waitFor({state:'visible'});
+  assert.equal(await failure.locator('.indicator-ring').evaluate(node => getComputedStyle(node).opacity), '1');
+  assert.equal(await failure.locator('.connection-indicator canvas').count(), 0);
   assert.equal(await failure.locator('#app').getAttribute('data-view'), 'connection');
-  console.log('Failure animation settles on the retry screen.');
+  await retry.click();
+  await failure.waitForSelector('#app[data-view="home"]', {timeout:10000});
+  console.log('The fallback exposes a working retry even if the renderer cannot load.');
   await failure.close();
-  // A cancellation must invalidate the pending completion sequence.
+  // A cancellation must invalidate completion even if the renderer is still loading.
   const page = await browser.newPage({ locale: 'ko-KR' });
+  let releaseRenderer;
+  const rendererCanLoad = new Promise(resolve => { releaseRenderer = resolve; });
+  await page.route(rendererChunk, async route => {
+    await rendererCanLoad;
+    await route.continue();
+  });
   await page.goto('http://127.0.0.1:1421');
   await page.getByRole('option', {name:'OLED42C4ENA'}).click();
+  const rendererRequested = page.waitForRequest(rendererChunk);
   await page.getByRole('button', {name:'연결',exact:true}).click();
+  await rendererRequested;
   await page.waitForSelector('#connection-indicator[data-state="completing"]');
+  assert.equal(await page.locator('#connection-indicator .indicator-fallback').isVisible(), true);
   await page.getByRole('button', {name:'뒤로'}).click();
-  await page.waitForTimeout(600);
+  await page.waitForSelector('#app[data-view="choose"]');
+  const rendererResponse = page.waitForResponse(rendererChunk);
+  releaseRenderer();
+  const response = await rendererResponse;
+  await page.evaluate(url => import(url).then(() => {}), response.url());
+  assert.equal(await page.locator('.connection-indicator canvas').count(), 0);
   assert.equal(await page.locator('#app').getAttribute('data-view'), 'choose');
-  console.log('Cancelled pairing cannot complete a stale connection animation.');
+  console.log('Cancelled pairing cannot attach a late renderer or complete a stale animation.');
 } finally {
   await browser?.close();
   if (server) await new Promise(resolve => server.httpServer.close(resolve));

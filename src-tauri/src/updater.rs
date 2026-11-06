@@ -7,6 +7,14 @@ use tokio::sync::Mutex;
 #[derive(Default)]
 pub struct UpdateLock(Mutex<()>);
 
+impl UpdateLock {
+    pub(crate) fn try_lock(
+        &self,
+    ) -> Result<tokio::sync::MutexGuard<'_, ()>, tokio::sync::TryLockError> {
+        self.0.try_lock()
+    }
+}
+
 #[derive(Serialize)]
 pub struct UpdateStatus {
     version: String,
@@ -45,7 +53,6 @@ pub async fn check_for_updates_manual(
     on_progress: Channel<&'static str>,
 ) -> Result<UpdateResult, String> {
     let _guard = state
-        .0
         .try_lock()
         .map_err(|_| "업데이트가 이미 진행 중이에요.".to_owned())?;
     let updater = app

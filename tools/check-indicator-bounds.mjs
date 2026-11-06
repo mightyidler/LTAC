@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { RibbonCurve, indicatorShape, ringRadii, completionPose, updateRingGeometry } from '../ui/src/connection-motion.ts';
+import { indicatorShape, completionPose } from '../ui/src/connection-motion.ts';
+import { RibbonCurve, ringRadii, updateRingGeometry } from '../ui/src/connection-renderer.ts';
 
 const camera = new THREE.PerspectiveCamera(indicatorShape.fov, indicatorShape.width / indicatorShape.height, 1, 1000);
 camera.position.z = indicatorShape.cameraZ;

@@ -13,7 +13,10 @@ use std::{
     fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{
@@ -868,30 +871,62 @@ async fn resume_automatic(state: &Desktop, app: &tauri::AppHandle, enabled: bool
     }
 }
 
+const WEBVIEW_IDLE_GRACE: Duration = Duration::from_secs(30);
+
+#[derive(Default)]
+struct MainWindowLifecycle {
+    revision: AtomicU64,
+    has_opened: AtomicBool,
+}
+
+impl MainWindowLifecycle {
+    fn next_revision(&self) -> u64 {
+        self.revision
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1)
+    }
+
+    fn is_current(&self, revision: u64) -> bool {
+        self.revision.load(Ordering::Relaxed) == revision
+    }
+}
+
 fn show(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let handle = app.clone();
-        tauri::async_runtime::spawn(async move {
-            let state = handle.state::<Desktop>();
-            // Keep a live pairing visible rather than waiting on its operation
-            // lock while the TV is asking for approval.
-            if read(&state).is_ok_and(|s| s.stage != "pairing") {
-                state.discovery_cancel.notify_waiters();
-                let _operation = state.operation.lock().await;
-                update(&state.view, &handle, |s| {
-                    s.stage = "ready".into();
-                    s.busy = false;
-                });
-                if let Ok(snapshot) = read(&state) {
-                    let _ = handle.emit("ltac-opened", snapshot);
-                }
-            }
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
-        });
+    let lifecycle = app.state::<MainWindowLifecycle>();
+    let revision = lifecycle.next_revision();
+    if !lifecycle.has_opened.load(Ordering::Relaxed) {
+        show_main_window(app);
         return;
     }
+
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<Desktop>();
+        // Keep a live pairing visible while the TV is asking for approval.
+        if read(&state).is_ok_and(|s| s.stage != "pairing") {
+            state.discovery_cancel.notify_waiters();
+            let _operation = state.operation.lock().await;
+            if !app.state::<MainWindowLifecycle>().is_current(revision) {
+                return;
+            }
+            update(&state.view, &app, |s| {
+                s.stage = "ready".into();
+                s.busy = false;
+            });
+            if let Ok(snapshot) = read(&state) {
+                let _ = app.emit("ltac-opened", snapshot);
+            }
+        }
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if handle.state::<MainWindowLifecycle>().is_current(revision) {
+                show_main_window(&handle);
+            }
+        });
+    });
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
     if app.get_webview_window("main").is_none() {
         let result = app
             .config()
@@ -908,10 +943,42 @@ fn show(app: &tauri::AppHandle) {
         }
     }
     if let Some(window) = app.get_webview_window("main") {
+        app.state::<MainWindowLifecycle>()
+            .has_opened
+            .store(true, Ordering::Relaxed);
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+fn release_hidden_webview(app: tauri::AppHandle, revision: u64) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(WEBVIEW_IDLE_GRACE).await;
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if !handle.state::<MainWindowLifecycle>().is_current(revision) {
+                return;
+            }
+            let Some(window) = handle.get_webview_window("main") else {
+                return;
+            };
+            if !window.is_visible().is_ok_and(|visible| !visible) {
+                return;
+            }
+            let state = handle.state::<Desktop>();
+            let updater = handle.state::<crate::updater::UpdateLock>();
+            if let Ok(_operation) = state.operation.try_lock()
+                && let Ok(_update) = updater.try_lock()
+                && read(&state)
+                    .is_ok_and(|s| !s.busy && s.stage != "pairing" && s.stage != "searching")
+            {
+                let _ = window.destroy();
+            } else {
+                release_hidden_webview(handle.clone(), revision);
+            }
+        });
+    });
 }
 
 fn apply_service(state: &Desktop, app: &tauri::AppHandle, remote: ltac::service_ipc::Snapshot) {
@@ -1374,6 +1441,7 @@ pub fn run() -> Result<()> {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(crate::updater::UpdateLock::default())
+        .manage(MainWindowLifecycle::default())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -1381,9 +1449,14 @@ pub fn run() -> Result<()> {
         ))
         .setup(|app| setup(app).map_err(Into::into))
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && window.label() == "main"
+            {
                 api.prevent_close();
-                let _ = window.hide();
+                if window.hide().is_ok() {
+                    let revision = window.state::<MainWindowLifecycle>().next_revision();
+                    release_hidden_webview(window.app_handle().clone(), revision);
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -1404,7 +1477,16 @@ pub fn run() -> Result<()> {
             crate::updater::update_status,
             crate::updater::check_for_updates_manual
         ])
-        .run(tauri::generate_context!())?;
+        .build(tauri::generate_context!())?
+        .run(|_, event| {
+            // Releasing the last WebView leaves the tray and background work running.
+            if let tauri::RunEvent::ExitRequested {
+                api, code: None, ..
+            } = event
+            {
+                api.prevent_exit();
+            }
+        });
     Ok(())
 }
 

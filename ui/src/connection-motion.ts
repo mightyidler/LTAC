@@ -1,44 +1,8 @@
-import * as THREE from 'three';
-
 export const indicatorShape = {
   width: 140, height: 48, cameraZ: 48, fov: 28,
   retreat: 15, coverOffset: 31, ringOffset: 31.1,
   radius: 14.987204, stroke: 1.8,
 } as const;
-const projection = indicatorShape.height / 2 / Math.tan(indicatorShape.fov * Math.PI / 360);
-const finalDepth = indicatorShape.cameraZ + indicatorShape.retreat - indicatorShape.ringOffset;
-export const ringRadii = {
-  inner: (indicatorShape.radius - indicatorShape.stroke / 2) * finalDepth / projection,
-  outer: (indicatorShape.radius + indicatorShape.stroke / 2) * finalDepth / projection,
-};
-
-// Move both edges by the same amount instead of scaling the entire band.
-// This keeps its projected stroke at 1.8px while the circle grows.
-export function updateRingGeometry(geometry: THREE.RingGeometry, radiusPixels: number, progress: number) {
-  const depth = indicatorShape.cameraZ + indicatorShape.retreat * progress - indicatorShape.ringOffset * Math.sin(Math.PI / 2 * progress);
-  const segments = geometry.parameters.thetaSegments;
-  const positions = geometry.attributes.position;
-  for (let edge = 0; edge < 2; edge++) {
-    const radius = (radiusPixels + (edge === 0 ? -1 : 1) * indicatorShape.stroke / 2) * depth / projection;
-    for (let i = 0; i <= segments; i++) {
-      const angle = i / segments * Math.PI * 2;
-      positions.setXYZ(edge * (segments + 1) + i, radius * Math.cos(angle), radius * Math.sin(angle), 0);
-    }
-  }
-  positions.needsUpdate = true;
-  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), (radiusPixels + indicatorShape.stroke / 2) * depth / projection);
-}
-
-export class RibbonCurve extends THREE.Curve<THREE.Vector3> {
-  constructor() { super(); }
-  getPoint(percent: number, target = new THREE.Vector3()) {
-    const tau = Math.PI * 2;
-    let t = (percent % .25) / .25;
-    t = percent % .25 - (2 * (1 - t) * t * -.0185 + t * t * .25);
-    if ([0, 2].includes(Math.floor(percent / .25))) t *= -1;
-    return target.set(30 * Math.sin(tau * percent), 5.6 * Math.cos(tau * 3 * percent), 5.6 * Math.sin(tau * 2 * (percent - t)));
-  }
-}
 
 const smooth = (low: number, high: number, value: number) => {
   const t = Math.max(0, Math.min(1, (value - low) / (high - low)));

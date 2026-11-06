@@ -24,11 +24,13 @@ import { updateScreenTimeLabel, fitScreenTimeClose, copyScreenTimeLabel, trackSc
 import './number-pop-in.css';
 import './screen-protection.css';
 
-// Prepare preview styles and both text weights before the first visible screen.
 const previewModule = !desktop && import.meta.env.DEV ? await import('../dev/preview') : null;
-const initialUpdate = await appUpdateState().catch(() => ({ version: __APP_VERSION__, completed: false }));
-await Promise.all([document.fonts.load('300 15px Pretendard'), document.fonts.load('400 15px Pretendard'), document.fonts.load('500 24px Pretendard')]).catch(() => {});
-await initializePreferences();
+// The same variable font covers all UI weights. Start independent setup before the first render.
+const [initialUpdate] = await Promise.all([
+  appUpdateState().catch(() => ({ version: __APP_VERSION__, completed: false })),
+  document.fonts.load('400 15px Pretendard').catch(() => {}),
+  initializePreferences(),
+]);
 const app = document.querySelector<HTMLElement>('#app')!;
 const check = icons.check;
 const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);

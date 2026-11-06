@@ -8,6 +8,11 @@ const evidence = new URL('../local/test-results/theme-language/', import.meta.ur
 mkdirSync(evidence, { recursive: true });
 let server, browser;
 const errors = [];
+const homeHeadings = {
+  ko: ['기기 목록', '전원', '화면 보호', '일반'],
+  en: ['Devices', 'Power', 'Screen protection', 'General'],
+  ja: ['デバイス一覧', '電源', '画面保護', '一般'],
+};
 const typography = JSON.parse(readFileSync(new URL('../tests/fixtures/typography.json', import.meta.url), 'utf8'));
 assert(typography.entries.every(entry => entry.weight === entry.originalWeight - 100), 'Apply exactly one correction to raw JSON weights');
 async function checkTypography(page) {
@@ -72,13 +77,13 @@ try {
       await page.mouse.up();
       await page.locator('#app').screenshot({ path: new URL(`${expected}-${theme}-theme.png`, evidence).pathname.replace(/^\/(\w:)/, '$1') });
       await page.locator('#navigation').click();
-      const headings = await page.locator('.t-page:not([inert]) h2').allTextContents();
-      assert.deepEqual(headings, expected === 'ko' ? ['기기 목록','전원','일반'] : expected === 'ja' ? ['デバイス一覧','電源','一般'] : ['Devices','Power','General']);
+      const headings = page.locator('.t-page:not([inert]) h2');
+      assert.deepEqual(await headings.allTextContents(), homeHeadings[expected]);
       await checkTypography(page);
       await page.locator('#shortcut').click();
       await checkTypography(page);
       await page.keyboard.press('Escape');
-      assert.deepEqual(await page.locator('.t-page:not([inert]) h2').evaluateAll(nodes => nodes.map(node => [getComputedStyle(node).paddingTop, getComputedStyle(node).paddingBottom])), [['0px','0px'],['0px','0px'],['0px','0px']]);
+      assert.deepEqual(await headings.evaluateAll(nodes => nodes.map(node => [getComputedStyle(node).paddingTop, getComputedStyle(node).paddingBottom])), homeHeadings[expected].map(() => ['0px', '0px']));
       const trigger = page.locator('#language-setting');
       assert(await trigger.evaluate(node => node.offsetWidth < node.parentElement.offsetWidth / 2), 'Only value and chevron form the settings trigger');
       await page.locator('#language-label').click();
